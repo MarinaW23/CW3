@@ -13,63 +13,68 @@ library(ggpubr)
 library(gridExtra)
 library(stringr)
 library(tidyverse)
-```
 
-
-
-```{r}
-AirbnbRio <- read.csv("AirnbnbRio.csv")
-summary(AirbnbRio)
-apply(is.na(AirbnbRio), 2, sum)
-#so negligible level of missingness
+data <- read.csv("AirnbnbRio.csv")
 ```
 
 
 ```{r}
-#AirbnbRio[AirbnbRio$host_response_rate==("N/A")]<-NA
-AirbnbRio$host_response_rate <- na_if(AirbnbRio$host_response_rate,"N/A")
-levels(AirbnbRio$host_response_rate)
-summary(AirbnbRio$host_response_rate)
+#Converting character variable to factor variables.
+data$host_response_rate <- as.factor(data$host_response_rate)
+data$neighbourhood <- as.factor(data$neighbourhood)
+data$property_type <- as.factor(data$property_type)
+data$room_type <- as.factor(data$room_type)
+
+summary(data)
+```
+
+
+```{r}
+#Converting N/A in host response rate into NAs.
+data$host_response_rate <- na_if(data$host_response_rate,"N/A")
+
+#Reformatting host_response_rate to a numerical variable and removes % sign.
+levels(data$host_response_rate) <- str_replace_all(levels(data$host_response_rate), "%", "")
+data$host_response_rate <- as.numeric(data$host_response_rate)
 ```
 
 ```{r}
-#plot(AirbnbRio$accommodates,AirbnbRio$guests_included)
-#reformatting host_response_rate to a numerical variable
-levels(AirbnbRio$host_response_rate) <- str_replace_all(levels(AirbnbRio$host_response_rate), "%", "")
-AirbnbRio$host_response_rate <- as.numeric(AirbnbRio$host_response_rate)
-str(AirbnbRio)
-summary(AirbnbRio$host_response_rate)
-```
-```{r}
-apply(is.na(AirbnbRio),2,mean)
-mean(apply(is.na(AirbnbRio),1,sum)==0)
+#Proportion of missingness in data set for each variables
+apply(is.na(data),2,mean)
+#the proportion of complete cases
+mean(apply(is.na(data),1,sum)==0)
+
 source("plot.miss.R")
-plot.miss(AirbnbRio)
-resp_miss <-is.na(AirbnbRio$host_response_rate)
-cor(AirbnbRio[,-c(2:6)],resp_miss,use= "pairwise")
-boxplot(AirbnbRio$number_of_reviews~ resp_miss)
+plot.miss(data, c(2,3,7,12,13))
+#Looks random
+
+#correlation between missingness and variables.
+resp_miss <-is.na(data$host_response_rate)
+cor(data[,-c(2:6)],resp_miss,use= "pairwise")
+
+par(mfrow = c(1,2))
+boxplot(data$number_of_reviews~ resp_miss)
 #missingness not dep on no. of reviews
-boxplot(AirbnbRio$reviews_per_month~ resp_miss)
+boxplot(data$reviews_per_month~ resp_miss)
 #missingness dep on revs per month so MAR as median doesn't lie inside the IQR
 ```
 
 ```{r}
-colnames(AirbnbRio)<-c("price","resp_rate","list_count","n_hood","prop_type","room_type", "bathrooms", "accommodates", "guests", "min_nights", "num_reviews", "revs_month", "revs_rating", "avail_30")
+#Changing column names
+colnames(data)<-c("price","resp_rate","list_count","n_hood","prop_type","room_type", "bathrooms", "accommodates", "guests", "min_nights", "num_reviews", "revs_month", "revs_rating", "avail_30")
 ```
 
 ```{r}
-cvars<-c(colnames(AirbnbRio)[-c(4,5,6)])
-noNAs <- na.omit(AirbnbRio[,-c(4,5,6)]) 
+#Correlation matrix
+cvars<-c(colnames(data)[-c(4,5,6)])
+noNAs <- na.omit(data[,-c(4,5,6)]) 
 cors <- round(cor(noNAs, use = "pairwise"),2)
 cors
-
 ```
-
 Reading from the table tells us which explanatory variables have high correlation and have the potential to be removed from our models later on if a highly correlated variable already exists and which variables to expect to be in final models. 
 
 We do not want multicollinearity affecting our model and resulting in less accurate statistical inferences.
 High correlations are as follows:
-
 
 * Price: bathrooms(0.54), accommodates(0.50), guests(0.28)
 * Bathrooms: accommodates(0.58), guests(0.34)
@@ -80,17 +85,19 @@ Response rate, host listing counts, review rating and 30 day availability appear
 
 
 ```{r}
-#par(mfrow = c(3,5))
-for(v in cvars[])hist(AirbnbRio[,v], xlab =v, main = c("Histogram of", v))
-barplot(xtabs(~AirbnbRio$n_hood),las=1, main = c("Barplot of ","Neighbourhood"))
-barplot(xtabs(~AirbnbRio$prop_type),las= 1,main = c("Barplot of ","Property Type"))
-barplot(xtabs(~AirbnbRio$room_type),las= 1,main = c("Barplot of ","Room Type"))
+par(mfrow = c(3,5))
+for(v in cvars[])hist(data[,v], xlab =v, main = c("Histogram of", v))
+barplot(xtabs(~data$n_hood),las=1, main = c("Barplot of ","Neighbourhood"))
+barplot(xtabs(~data$prop_type),las= 1,main = c("Barplot of ","Property Type"))
+barplot(xtabs(~data$room_type),las= 1,main = c("Barplot of ","Room Type"))
 ```
+
 ```{r}
-sensible_nights <- AirbnbRio$min_nights[AirbnbRio$min_nights<200]
+#Removes large min nights values from dataset
+sensible_nights <- data$min_nights[data$min_nights<200]
 xtabs(~sensible_nights)
 hist(sensible_nights)
-prop.table(xtabs(~AirbnbRio$bathrooms))
+prop.table(xtabs(~data$bathrooms))
 ```
 
 # Discussing histograms & distributions of data
@@ -113,12 +120,13 @@ prop.table(xtabs(~AirbnbRio$bathrooms))
 ```{r}
 #also checking for skew with density plots
 par(mfrow = c(3,5))
-for(v in cvars[])densityPlot(AirbnbRio[,v], xlab =v, main = c("Density of", v))
+for(v in cvars[])densityPlot(data[,v], xlab =v, main = c("Density of", v))
 ```
+
 ```{r, echo=FALSE}
 #investigating outliers with boxplots
-#par(mfrow = c(3,4))
-for(v in cvars[])boxplot(AirbnbRio[,v], main = v, las = 2)
+par(mfrow = c(3,4))
+for(v in cvars[])boxplot(data[,v], main = v, las = 2)
 ```
 
 # Question 1
@@ -127,12 +135,13 @@ Plotting our variables against price gives us an idea of any problems (outliers,
 
 ```{r, echo=FALSE}
 par(mfrow=c(3,4))
-for(v in cvars[-1])plot(AirbnbRio[,v], AirbnbRio$price, xlab =v, ylab="Price")
+for(v in cvars[-1])plot(data[,v], data$price, xlab =v, ylab="Price")
 ```
+
 ```{r}
-plot(density(AirbnbRio$price))
-ggqqplot(AirbnbRio$price)
-ggqqplot(log(AirbnbRio$price))
+plot(density(data$price))
+ggqqplot(data$price)
+ggqqplot(log(data$price))
 ```
 
 So price qqplot is a crazy shape but log(price) seems to have almost normal distribution. May come in useful!
@@ -140,8 +149,9 @@ Price looks almost like a gamma distribution
 ```{r}
 which(cors[,1]>0.25)
 ```
+
 ```{r}
-x<-lm(price~ resp_rate +list_count+ bathrooms+ accommodates+ guests+ min_nights+ num_reviews+ revs_month+ revs_rating+ avail_30,data=AirbnbRio)
+x<-lm(price~ resp_rate +list_count+ bathrooms+ accommodates+ guests+ min_nights+ num_reviews+ revs_month+ revs_rating+ avail_30,data=data)
 par(mfrow=c(2,2))
 step=step(x) ; summary(step) ; plot(step) ; AIC(step) 
 ```
