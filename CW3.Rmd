@@ -1,0 +1,122 @@
+---
+title: "CW3"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(GGally)
+library(dplyr)
+library(ggplot2)
+library(car)
+library(ggpubr)
+library(gridExtra)
+library(stringr)
+library(tidyverse)
+```
+
+
+
+```{r}
+AirbnbRio <- read.csv("AirnbnbRio.csv")
+#summary(AirbnbRio)
+apply(is.na(AirbnbRio), 2, sum)
+#so negligible level of missingness
+```
+```{r}
+#reformatting host_response_rate to a numerical variable
+levels(AirbnbRio$host_response_rate) <- str_replace_all(levels(AirbnbRio$host_response_rate), "%", "")
+AirbnbRio$host_response_rate <- as.numeric(AirbnbRio$host_response_rate)
+```
+```{r}
+colnames(AirbnbRio)<-c("price","resp_rate","list_count","n_hood","prop_type","room_type", "bathrooms", "accommodates", "guests", "min_nights", "num_reviews", "revs_month", "revs_rating", "avail_30")
+```
+
+```{r}
+cvars<-c(colnames(AirbnbRio)[-c(4,5,6)])
+noNAs <- na.omit(AirbnbRio[,-c(4,5,6)]) 
+cors <- round(cor(noNAs, use = "pairwise"),2)
+cors
+```
+
+Reading from the table tells us which explanatory variables have high correlation and have the potential to be removed from our models later on if a highly correlated variable already exists and which variables to expect to be in final models. 
+
+We do not want multicollinearity affecting our model and resulting in less accurate statistical inferences.
+High correlations are as follows:
+
+
+* Price: bathrooms(0.54), accommodates(0.50), guests(0.28)
+* Bathrooms: accommodates(0.58), guests(0.34)
+* Accommodates: guests(0.49)
+* Number of reviews: reviews per month(0.57)
+
+Response rate, host listing counts, review rating and 30 day availability appear to not be strongly correlated with any of the other factors.
+
+
+```{r}
+#par(mfrow = c(3,5))
+for(v in cvars[])hist(AirbnbRio[,v], xlab =v, main = c("Histogram of", v))
+barplot(xtabs(~AirbnbRio$n_hood),las=1, main = c("Barplot of ","Neighbourhood"))
+barplot(xtabs(~AirbnbRio$prop_type),las= 1,main = c("Barplot of ","Property Type"))
+barplot(xtabs(~AirbnbRio$room_type),las= 1,main = c("Barplot of ","Room Type"))
+```
+```{r}
+sensible_nights <- AirbnbRio$min_nights[AirbnbRio$min_nights<200]
+xtabs(~sensible_nights)
+hist(sensible_nights)
+prop.table(xtabs(~AirbnbRio$bathrooms))
+```
+
+# Discussing histograms & distributions of data
+
+* Price: right-skewed
+* Response Rate: majority are close to 0 
+* Listings count: majority are close to 0
+* Neighbourhood: majority in Copacabana
+* Property type: most are apartments
+* Room type: most are entire home
+* Bathrooms: right skewed
+* Accomodates:right skewed
+* Guests: right-skewed
+* Min nights: right-skewed with some large values (300,365,1000)
+* Num of reviews: right-skewed many values with only 1 observation, might require some grouping for those
+* Revs per month: right-skewed
+* Revs rating: left-skewed
+* Available 30: somewhat uniform in middle with very large tails
+
+```{r}
+#also checking for skew with density plots
+par(mfrow = c(3,5))
+for(v in cvars[])densityPlot(AirbnbRio[,v], xlab =v, main = c("Density of", v))
+```
+```{r, echo=FALSE}
+#investigating outliers with boxplots
+#par(mfrow = c(3,4))
+for(v in cvars[])boxplot(AirbnbRio[,v], main = v, las = 2)
+```
+
+# Question 1
+
+Plotting our variables against price gives us an idea of any problems (outliers, unrealistic values etc.) or features of the data that we didn't detect in our summaries.
+
+```{r, echo=FALSE}
+par(mfrow=c(3,4))
+for(v in cvars[-1])plot(AirbnbRio[,v], AirbnbRio$price, xlab =v, ylab="Price")
+```
+```{r}
+plot(density(AirbnbRio$price))
+ggqqplot(AirbnbRio$price)
+ggqqplot(log(AirbnbRio$price))
+```
+
+So price qqplot is a crazy shape but log(price) seems to have almost normal distribution. May come in useful!
+Price looks almost like a gamma distribution
+```{r}
+which(cors[,1]>0.25)
+```
+```{r}
+x<-lm(price~ resp_rate +list_count+ bathrooms+ accommodates+ guests+ min_nights+ num_reviews+ revs_month+ revs_rating+ avail_30,data=AirbnbRio)
+par(mfrow=c(2,2))
+step=step(x) ; summary(step) ; plot(step) ; AIC(step) 
+```
+We see that only some variables are statistically significant in predicting price, namely: resp_rate, list_count, bathrooms, accommodates, guests, revs_month, revs_rating and avail_30.
