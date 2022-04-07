@@ -19,15 +19,40 @@ library(tidyverse)
 
 ```{r}
 AirbnbRio <- read.csv("AirnbnbRio.csv")
-#summary(AirbnbRio)
+summary(AirbnbRio)
 apply(is.na(AirbnbRio), 2, sum)
 #so negligible level of missingness
 ```
+
+
 ```{r}
+#AirbnbRio[AirbnbRio$host_response_rate==("N/A")]<-NA
+AirbnbRio$host_response_rate <- na_if(AirbnbRio$host_response_rate,"N/A")
+levels(AirbnbRio$host_response_rate)
+summary(AirbnbRio$host_response_rate)
+```
+
+```{r}
+#plot(AirbnbRio$accommodates,AirbnbRio$guests_included)
 #reformatting host_response_rate to a numerical variable
 levels(AirbnbRio$host_response_rate) <- str_replace_all(levels(AirbnbRio$host_response_rate), "%", "")
 AirbnbRio$host_response_rate <- as.numeric(AirbnbRio$host_response_rate)
+str(AirbnbRio)
+summary(AirbnbRio$host_response_rate)
 ```
+```{r}
+apply(is.na(AirbnbRio),2,mean)
+mean(apply(is.na(AirbnbRio),1,sum)==0)
+source("plot.miss.R")
+plot.miss(AirbnbRio)
+resp_miss <-is.na(AirbnbRio$host_response_rate)
+cor(AirbnbRio[,-c(2:6)],resp_miss,use= "pairwise")
+boxplot(AirbnbRio$number_of_reviews~ resp_miss)
+#missingness not dep on no. of reviews
+boxplot(AirbnbRio$reviews_per_month~ resp_miss)
+#missingness dep on revs per month so MAR as median doesn't lie inside the IQR
+```
+
 ```{r}
 colnames(AirbnbRio)<-c("price","resp_rate","list_count","n_hood","prop_type","room_type", "bathrooms", "accommodates", "guests", "min_nights", "num_reviews", "revs_month", "revs_rating", "avail_30")
 ```
@@ -37,6 +62,7 @@ cvars<-c(colnames(AirbnbRio)[-c(4,5,6)])
 noNAs <- na.omit(AirbnbRio[,-c(4,5,6)]) 
 cors <- round(cor(noNAs, use = "pairwise"),2)
 cors
+
 ```
 
 Reading from the table tells us which explanatory variables have high correlation and have the potential to be removed from our models later on if a highly correlated variable already exists and which variables to expect to be in final models. 
