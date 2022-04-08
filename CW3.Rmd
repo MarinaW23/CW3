@@ -129,6 +129,7 @@ par(mfrow = c(3,4))
 for(v in cvars[])boxplot(data[,v], main = v, las = 2)
 ```
 
+
 # Question 1
 
 Plotting our variables against price gives us an idea of any problems (outliers, unrealistic values etc.) or features of the data that we didn't detect in our summaries.
