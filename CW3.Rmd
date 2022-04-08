@@ -139,11 +139,14 @@ par(mfrow=c(3,4))
 for(v in cvars[-1])plot(data[,v], data$price, xlab =v, ylab="Price")
 ```
 
+
 ```{r}
 plot(density(data$price))
 ggqqplot(data$price)
 ggqqplot(log(data$price))
 ```
+
+
 
 So price qqplot is a crazy shape but log(price) seems to have almost normal distribution. May come in useful!
 Price looks almost like a gamma distribution
