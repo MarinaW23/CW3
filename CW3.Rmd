@@ -13,6 +13,7 @@ library(ggpubr)
 library(gridExtra)
 library(stringr)
 library(tidyverse)
+library(lmtest)
 
 data <- read.csv("AirnbnbRio.csv")
 ```
@@ -36,6 +37,9 @@ data$host_response_rate <- na_if(data$host_response_rate,"N/A")
 #Reformatting host_response_rate to a numerical variable and removes % sign.
 levels(data$host_response_rate) <- str_replace_all(levels(data$host_response_rate), "%", "")
 data$host_response_rate <- as.numeric(data$host_response_rate)
+
+#Converting all of the integer variables to numerical variables.
+data <- data %>% mutate(across(.cols=where(is.integer), .fns=as.numeric))
 ```
 
 ```{r}
@@ -127,6 +131,8 @@ for(v in cvars[])densityPlot(data[,v], xlab =v, main = c("Density of", v))
 #investigating outliers with boxplots
 par(mfrow = c(3,4))
 for(v in cvars[])boxplot(data[,v], main = v, las = 2)
+#resp_rate, list_count, bathrooms, accommodates, guests, revs_month, revs_rating and avail_30
+
 ```
 
 
@@ -157,6 +163,50 @@ which(cors[,1]>0.25)
 ```{r}
 x<-lm(price~ resp_rate +list_count+ bathrooms+ accommodates+ guests+ min_nights+ num_reviews+ revs_month+ revs_rating+ avail_30,data=data)
 par(mfrow=c(2,2))
-step=step(x) ; summary(step) ; plot(step) ; AIC(step) 
+```
+
+
+```{r}
+#had to run step function with no missing data otherwise doesn't work
+x1<-lm(price~ resp_rate +list_count+ bathrooms+ accommodates+ guests+ min_nights+ num_reviews+ revs_month+ revs_rating+ avail_30,data=noNAs) 
+step=step(x1) ; summary(step) ; plot(step) ; AIC(step) 
 ```
 We see that only some variables are statistically significant in predicting price, namely: resp_rate, list_count, bathrooms, accommodates, guests, revs_month, revs_rating and avail_30.
+
+```{r}
+#time to fit a glm! first trying a gamma dist because that's what price's density plot looked like 
+
+glm1 = glm(formula = log(price) ~ list_count + bathrooms + accommodates + guests + min_nights + revs_month + revs_rating + avail_30,family = Gamma(link="log"), data = data)
+summary(glm1)
+par(mfrow=c(2,4))
+plot(step)
+plot(glm1)
+qchisq(df=4557,p=0.05, lower.tail=FALSE)
+bptest(glm1)
+```
+The Q-Q plot looks to give better fitting residuals however the AIC is much greater. This is a problem. The diagnostic plots look fine.
+
+```{r}
+#Gamma distribution family but with identity link
+
+glm2 = glm(formula = log(price) ~ list_count + bathrooms + accommodates + guests + min_nights + revs_month + revs_rating + avail_30,family = Gamma(link="identity"), data = data)
+summary(glm2)
+par(mfrow=c(2,4))
+plot(glm1)
+plot(glm2)
+#qchisq(df=4557,p=0.05, lower.tail=FALSE)
+bptest(glm2)
+#There is a scary error message and the coefficient estimates look quite suspect but the AIC is lower   
+```
+
+```{r}
+#now trying Gaussian distribution with log(price) as the response variable
+
+glm3 = glm(formula = log(price) ~ list_count + bathrooms + accommodates + guests + min_nights + revs_month + revs_rating + avail_30,family = gaussian(), data = data)
+summary(glm2)
+par(mfrow=c(2,4))
+plot(glm1)
+plot(glm3)
+qchisq(df=4557,p=0.05, lower.tail=FALSE)
+bptest(glm3)
+```
