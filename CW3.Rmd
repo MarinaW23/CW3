@@ -13,6 +13,7 @@ library(ggpubr)
 library(gridExtra)
 library(stringr)
 library(tidyverse)
+library(kableExtra)
 
 data <- read.csv("AirnbnbRio.csv")
 ```
@@ -24,6 +25,16 @@ data$host_response_rate <- as.factor(data$host_response_rate)
 data$neighbourhood <- as.factor(data$neighbourhood)
 data$property_type <- as.factor(data$property_type)
 data$room_type <- as.factor(data$room_type)
+
+#Converting integer variables to numerical variables
+# data$price <- as.numeric(data$price)
+# data$host_listings_count <- as.numeric(data$host_listings_count)
+# data$accommodates <- as.numeric(data$accommodates)
+# data$guests_included <- as.numeric(data$guests_included)
+# data$minimum_nights <- as.numeric(data$minimum_nights)
+# data$number_of_reviews <- as.numeric(data$number_of_reviews)
+# data$review_scores_rating <- as.numeric(data$review_scores_rating)
+# data$availability_30 <- as.numeric(data$availability_30)
 
 summary(data)
 ```
@@ -50,7 +61,7 @@ plot.miss(data, c(2,3,7,12,13))
 
 #correlation between missingness and variables.
 resp_miss <-is.na(data$host_response_rate)
-cor(data[,-c(2:6)],resp_miss,use= "pairwise")
+cor(data[,-c(2,4,5,6)],resp_miss,use= "pairwise")
 
 par(mfrow = c(1,2))
 boxplot(data$number_of_reviews~ resp_miss)
@@ -69,28 +80,37 @@ colnames(data)<-c("price","resp_rate","list_count","n_hood","prop_type","room_ty
 cvars<-c(colnames(data)[-c(4,5,6)])
 noNAs <- na.omit(data[,-c(4,5,6)]) 
 cors <- round(cor(noNAs, use = "pairwise"),2)
-cors
+#cors
+
+as.data.frame(cors)%>%
+  mutate_all(~cell_spec(.x, color = ifelse(abs(.x)>=0.3, "red"," black"))) %>%
+  kable(escape = F) %>%
+  kable_styling(font_size = 7)
 ```
 Reading from the table tells us which explanatory variables have high correlation and have the potential to be removed from our models later on if a highly correlated variable already exists and which variables to expect to be in final models. 
 
 We do not want multicollinearity affecting our model and resulting in less accurate statistical inferences.
 High correlations are as follows:
 
-* Price: bathrooms(0.54), accommodates(0.50), guests(0.28)
-* Bathrooms: accommodates(0.58), guests(0.34)
+* Price: bathrooms(0.56), accommodates(0.52), guests(0.30)
+* Bathrooms: accommodates(0.59), guests(0.35)
 * Accommodates: guests(0.49)
-* Number of reviews: reviews per month(0.57)
+* Number of reviews: reviews per month(0.55)
+
+(Should only use one variable out of number of reviews and reviews per month as they measure the same thing, and are correlated.)
 
 Response rate, host listing counts, review rating and 30 day availability appear to not be strongly correlated with any of the other factors.
 
 
 ```{r}
+#Histograms and boxplots of variables
 par(mfrow = c(3,5))
 for(v in cvars[])hist(data[,v], xlab =v, main = c("Histogram of", v))
 barplot(xtabs(~data$n_hood),las=1, main = c("Barplot of ","Neighbourhood"))
 barplot(xtabs(~data$prop_type),las= 1,main = c("Barplot of ","Property Type"))
 barplot(xtabs(~data$room_type),las= 1,main = c("Barplot of ","Room Type"))
 ```
+We see that all variables are right-skewed except for revs_rating and avail_30 which are left-skewed (and neighbourhood which looks normally distributed).
 
 ```{r}
 #Removes large min nights values from dataset
@@ -142,20 +162,156 @@ for(v in cvars[-1])plot(data[,v], data$price, xlab =v, ylab="Price")
 ```{r}
 plot(density(data$price))
 ggqqplot(data$price)
+#Log transform
 ggqqplot(log(data$price))
 ```
-
-
 
 So price qqplot is a crazy shape but log(price) seems to have almost normal distribution. May come in useful!
 Price looks almost like a gamma distribution
 ```{r}
+#Variables that have correlation larger than 0.25 with price
 which(cors[,1]>0.25)
 ```
 
 ```{r}
-x<-lm(price~ resp_rate +list_count+ bathrooms+ accommodates+ guests+ min_nights+ num_reviews+ revs_month+ revs_rating+ avail_30,data=data)
-par(mfrow=c(2,2))
-step=step(x) ; summary(step) ; plot(step) ; AIC(step) 
+#New variable diff, difference between accommodates and guests.
+diff <- data$accommodates - data$guests
+summary(diff)
+plot(diff, data$price)
+
+#48 properties where guests included in price is larger than accommodates.
+sum((diff < 0))
+
+data %>% filter(data$guests > data$accommodates)
+#Maybe we should remove these 48 observations?? 
 ```
-We see that only some variables are statistically significant in predicting price, namely: resp_rate, list_count, bathrooms, accommodates, guests, revs_month, revs_rating and avail_30.
+
+```{r}
+#Full linear model with reviews per month
+full_lm1 <- lm(price ~. -num_reviews, data = na.omit(data))
+#Full linear model with number of reviews
+full_lm2 <- lm(price ~. -revs_month, data = na.omit(data))
+
+#Finding "best" linear model by comparing AIC using 'step' function
+#with reviews per month
+best_lm1 <- step(full_lm1, trace = F)
+#summary(best_lm1)
+AIC(best_lm1)
+#with number of reviews
+best_lm2 <- step(full_lm2, trace = F)
+#summary(best_lm2)
+AIC(best_lm2)
+
+#best_lm1, model with number of reviews gave smaller AIC.
+
+#Diagnostic plots
+par(mfrow=c(2,2))
+plot(best_lm1)
+
+#Model with log transform of response variable.
+log_best_lm1 <- update(best_lm1, log(.)~.)
+#summary(log_best_lm1)
+AIC(log_best_lm1)
+#Diagnostic plots
+par(mfrow=c(2,2))
+plot(log_best_lm1)
+
+#Checking AIC again after log transform
+best_lm <- step(log_best_lm1, trace = F)
+summary(best_lm)
+AIC(best_lm)
+#Diagnostic plots
+par(mfrow=c(2,2))
+plot(best_lm)
+
+#Checking interactions - improves model but interaction not significant.
+int_lm<-step(best_lm,scope=list(upper=~.+bathrooms*accommodates*guests,lower=~1),trace=F)
+summary(int_lm)
+AIC(int_lm)
+#Diagnostic plots
+par(mfrow=c(2,2))
+plot(int_lm)
+```
+We see that only some variables are statistically significant in predicting price, namely: list_count, neighbourhood, property type, room type, bathrooms, accommodates, guests, revs_month, revs_rating and avail_30.
+
+```{r}
+#Gaussian glm model
+
+#Full Gaussian model with reviews per month
+gau_mod1 <- glm(price ~. - num_reviews, family = gaussian(link = "log"), data = na.omit(data))
+#summary(gau_mod1)
+AIC(gau_mod1)
+
+#Full Gaussian model with number of reviews
+gau_mod2 <- glm(price ~. - revs_month, family = gaussian(link = "log"), data = data)
+#summary(gau_mod2)
+AIC(gau_mod2)
+
+best_gau_mod <- step(gau_mod1, trace = F)
+summary(best_gau_mod)
+
+par(mfrow = c(2,2))
+plot(best_gau_mod)
+
+test <- update(best_gau_mod, family = gaussian(link = "inverse"))
+par(mfrow = c(2,2))
+plot(test)
+```
+Gaussian doesn't seem to be as good a fit.
+
+```{r}
+#Inverse Gaussian models, may be more suited as variables are highly right skewed
+#Not too sure how to do inverse gaussian
+inv_gau_mod1 <- glm(price ~. - num_reviews, family = inverse.gaussian(link = "log"), data = na.omit(data))
+summary(inv_gau_mod1)
+par(mfrow = c(2,2))
+plot(inv_gau_mod1)
+```
+
+
+```{r}
+#Full Gamma model with reviews per month
+gam_mod1 <- glm(price ~. - num_reviews, family = Gamma(link = "log"), data = na.omit(data))
+AIC(gam_mod1)
+
+#Full Gamma model with number of reviews
+gam_mod2 <- glm(price ~. - revs_month, family = Gamma(link = "log"), data = data)
+AIC(gam_mod2)
+
+best_gam_mod <- step(gam_mod1, trace = F)
+summary(best_gam_mod)
+AIC(best_gam_mod)
+
+par(mfrow = c(2,2))
+plot(best_gam_mod)
+```
+
+From the different models, we see the linear model with log transform on the explanatory variable price, gives the best fit. So we choose this model. From this we see all variables are significant. The r-squared is 0.54, so 54% of the data is explained.
+
+
+# Question 2
+
+
+# Question 3
+
+```{r}
+summary(data$revs_rating)
+```
+We decide to take ratings above or equal to the 3rd quartile to mean very high review scores.
+
+```{r}
+#Creating new variable high_rating if observation has a very high review score.
+high_rating <- data$revs_rating
+high_rating[data$revs_rating >= 98] <- "TRUE"
+high_rating[data$revs_rating < 98] <- "FALSE"
+data <- data %>% mutate(high_rating = high_rating)
+data$high_rating <- as.logical(data$high_rating)
+```
+
+```{r}
+#Trying out linear model
+m <- lm(high_rating ~., data = data)
+summary(m)
+plot(m)
+```
+
