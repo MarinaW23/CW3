@@ -14,6 +14,7 @@ library(gridExtra)
 library(stringr)
 library(tidyverse)
 library(kableExtra)
+library(lmtest)
 
 data <- read.csv("AirnbnbRio.csv")
 ```
@@ -26,19 +27,8 @@ data$neighbourhood <- as.factor(data$neighbourhood)
 data$property_type <- as.factor(data$property_type)
 data$room_type <- as.factor(data$room_type)
 
-#Converting integer variables to numerical variables
-# data$price <- as.numeric(data$price)
-# data$host_listings_count <- as.numeric(data$host_listings_count)
-# data$accommodates <- as.numeric(data$accommodates)
-# data$guests_included <- as.numeric(data$guests_included)
-# data$minimum_nights <- as.numeric(data$minimum_nights)
-# data$number_of_reviews <- as.numeric(data$number_of_reviews)
-# data$review_scores_rating <- as.numeric(data$review_scores_rating)
-# data$availability_30 <- as.numeric(data$availability_30)
-
 summary(data)
 ```
-
 
 ```{r}
 #Converting N/A in host response rate into NAs.
@@ -47,6 +37,9 @@ data$host_response_rate <- na_if(data$host_response_rate,"N/A")
 #Reformatting host_response_rate to a numerical variable and removes % sign.
 levels(data$host_response_rate) <- str_replace_all(levels(data$host_response_rate), "%", "")
 data$host_response_rate <- as.numeric(data$host_response_rate)
+
+#Converting all of the integer variables to numerical variables.
+data <- data %>% mutate(across(.cols=where(is.integer), .fns=as.numeric))
 ```
 
 ```{r}
@@ -147,7 +140,9 @@ for(v in cvars[])densityPlot(data[,v], xlab =v, main = c("Density of", v))
 #investigating outliers with boxplots
 par(mfrow = c(3,4))
 for(v in cvars[])boxplot(data[,v], main = v, las = 2)
+#resp_rate, list_count, bathrooms, accommodates, guests, revs_month, revs_rating and avail_30
 ```
+
 
 # Question 1
 
@@ -157,7 +152,6 @@ Plotting our variables against price gives us an idea of any problems (outliers,
 par(mfrow=c(3,4))
 for(v in cvars[-1])plot(data[,v], data$price, xlab =v, ylab="Price")
 ```
-
 
 ```{r}
 plot(density(data$price))
@@ -192,31 +186,24 @@ full_lm1 <- lm(price ~. -num_reviews, data = na.omit(data))
 #Full linear model with number of reviews
 full_lm2 <- lm(price ~. -revs_month, data = na.omit(data))
 
-#Finding "best" linear model by comparing AIC using 'step' function
+#Finding "best" linear model by comparing AIC using 'step' function 
 #with reviews per month
 best_lm1 <- step(full_lm1, trace = F)
-#summary(best_lm1)
 AIC(best_lm1)
 #with number of reviews
 best_lm2 <- step(full_lm2, trace = F)
-#summary(best_lm2)
 AIC(best_lm2)
 
 #best_lm1, model with number of reviews gave smaller AIC.
-
 #Diagnostic plots
 par(mfrow=c(2,2))
 plot(best_lm1)
 
 #Model with log transform of response variable.
 log_best_lm1 <- update(best_lm1, log(.)~.)
-#summary(log_best_lm1)
 AIC(log_best_lm1)
-#Diagnostic plots
-par(mfrow=c(2,2))
-plot(log_best_lm1)
 
-#Checking AIC again after log transform
+#Using step to find best linear model by comparing AIC
 best_lm <- step(log_best_lm1, trace = F)
 summary(best_lm)
 AIC(best_lm)
@@ -234,30 +221,77 @@ plot(int_lm)
 ```
 We see that only some variables are statistically significant in predicting price, namely: list_count, neighbourhood, property type, room type, bathrooms, accommodates, guests, revs_month, revs_rating and avail_30.
 
+Final linear model gave AIC = 4084, but only has r-squared = 54%.
+
+```{r}
+#Trying a Gamma distribution first beacuse that's what price's density plot looked like.
+
+#Full Gamma model with reviews per month
+gam_mod1 <- glm(price ~. - num_reviews, family = Gamma(link = "log"), data = na.omit(data))
+AIC(gam_mod1)
+
+#Full Gamma model with number of reviews
+gam_mod2 <- glm(price ~. - revs_month, family = Gamma(link = "log"), data = data)
+AIC(gam_mod2)
+
+#Step to find best gamma model
+best_gam_mod <- step(gam_mod1, trace = F)
+AIC(best_gam_mod)
+#Diagnostic plots
+par(mfrow = c(2,2))
+plot(best_gam_mod)
+
+#Gamma model with log transform on price
+best_log_gam_mod <- update(best_gam_mod, log(.)~.)
+summary(best_log_gam_mod)
+AIC(best_log_gam_mod)
+#Diagnostic plots
+par(mfrow=c(2,2))
+plot(best_log_gam_mod)
+
+#Tests
+qchisq(df=4016,p=0.05, lower.tail=FALSE)
+bptest(best_log_gam_mod)
+
+#Testing with identity link function
+test <- update(best_log_gam_mod, family = Gamma(link = "identity"))
+#Gives larger AIC compared to log link function
+AIC(test)
+```
+Gamma distribution gave good fit with log transform of price, diagnostic plots looked good. Final gamma model had AIC = 4080, which is lower than the linear model.
+
 ```{r}
 #Gaussian glm model
 
 #Full Gaussian model with reviews per month
 gau_mod1 <- glm(price ~. - num_reviews, family = gaussian(link = "log"), data = na.omit(data))
-#summary(gau_mod1)
 AIC(gau_mod1)
 
 #Full Gaussian model with number of reviews
 gau_mod2 <- glm(price ~. - revs_month, family = gaussian(link = "log"), data = data)
-#summary(gau_mod2)
 AIC(gau_mod2)
 
+#Using step to find best Gaussian model
 best_gau_mod <- step(gau_mod1, trace = F)
-summary(best_gau_mod)
-
+AIC(best_gau_mod)
+#Diagnostic plots
 par(mfrow = c(2,2))
 plot(best_gau_mod)
 
-test <- update(best_gau_mod, family = gaussian(link = "inverse"))
+#Log transform on price
+best_log_gau_mod <- update(best_gau_mod, log(.)~.)
+summary(best_log_gau_mod)
+AIC(best_log_gau_mod)
+#Diagnostic plots
 par(mfrow = c(2,2))
-plot(test)
+plot(best_log_gau_mod)
+
+#Testing with inverse link function
+test <- update(best_log_gau_mod, family = gaussian(link = "inverse"))
+AIC(test)
+#Gives larger AIC
 ```
-Gaussian doesn't seem to be as good a fit.
+Gaussian model with log transform on price gives AIC = 4072, diagnostic plots also look good.
 
 ```{r}
 #Inverse Gaussian models, may be more suited as variables are highly right skewed
@@ -268,25 +302,21 @@ par(mfrow = c(2,2))
 plot(inv_gau_mod1)
 ```
 
+```{r}
+#Looking at the different diagnostic plots
+par(mfrow = c(2,2))
+plot(best_lm)
+par(mfrow = c(2,2))
+plot(best_log_gam_mod)
+par(mfrow = c(2,2))
+plot(best_log_gau_mod)
+```
+Linear and Gaussian model has better diagnostic plots compared to gamma, and I think Gaussian model has better diagnostic plots compared to linear model. So we choose the Gaussian model, which also gives lowest AIC??
 
 ```{r}
-#Full Gamma model with reviews per month
-gam_mod1 <- glm(price ~. - num_reviews, family = Gamma(link = "log"), data = na.omit(data))
-AIC(gam_mod1)
-
-#Full Gamma model with number of reviews
-gam_mod2 <- glm(price ~. - revs_month, family = Gamma(link = "log"), data = data)
-AIC(gam_mod2)
-
-best_gam_mod <- step(gam_mod1, trace = F)
-summary(best_gam_mod)
-AIC(best_gam_mod)
-
-par(mfrow = c(2,2))
-plot(best_gam_mod)
+summary(best_log_gau_mod)
 ```
-
-From the different models, we see the linear model with log transform on the explanatory variable price, gives the best fit. So we choose this model. From this we see all variables are significant. The r-squared is 0.54, so 54% of the data is explained.
+We see all variables are significant except for min nights.
 
 
 # Question 2
@@ -310,8 +340,11 @@ data$high_rating <- as.logical(data$high_rating)
 
 ```{r}
 #Trying out linear model
-m <- lm(high_rating ~., data = data)
+full_lm <- lm(high_rating ~. - num_reviews, data = data)
 summary(m)
+AIC(full_lm)
+#Diagnostic plots
+par(mfrow = c(2,2))
 plot(m)
 ```
 
