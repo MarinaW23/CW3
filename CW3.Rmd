@@ -5,45 +5,50 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse) #includes dplyr, ggplot2, stringr
 library(GGally)
-library(dplyr)
-library(ggplot2)
 library(car)
 library(ggpubr)
 library(gridExtra)
-library(stringr)
-library(tidyverse)
 library(kableExtra)
 library(lmtest)
+library(MASS)
+library(arm) #used for binnedplot
+library(boot) #used for cross-validation function
 
 data <- read.csv("AirnbnbRio.csv")
+
+old <- theme_set(theme_bw()) #set ggplot theme throughout doc
 ```
 
 
 ```{r}
-#Converting character variable to factor variables.
+## Cleaning data
+
+#Converting character variables to factor variables
 data$host_response_rate <- as.factor(data$host_response_rate)
 data$neighbourhood <- as.factor(data$neighbourhood)
 data$property_type <- as.factor(data$property_type)
 data$room_type <- as.factor(data$room_type)
 
-summary(data)
-```
-
-```{r}
-#Converting N/A in host response rate into NAs.
+#Converting "N/A" in host response rate into recognised missing values
 data$host_response_rate <- na_if(data$host_response_rate,"N/A")
 
-#Reformatting host_response_rate to a numerical variable and removes % sign.
+#Reformatting host_response_rate to a numerical variable and removing "%" sign
 levels(data$host_response_rate) <- str_replace_all(levels(data$host_response_rate), "%", "")
 data$host_response_rate <- as.numeric(data$host_response_rate)
 
-#Converting all of the integer variables to numerical variables.
+#Converting all of the integer variables to numerical variables
 data <- data %>% mutate(across(.cols=where(is.integer), .fns=as.numeric))
+
+summary(data)
 ```
 
+
 ```{r}
-#Proportion of missingness in data set for each variables
+## Investigating missingness
+
+#Proportion of missingness in data set for each variable
 apply(is.na(data),2,mean)
 #the proportion of complete cases
 mean(apply(is.na(data),1,sum)==0)
@@ -52,21 +57,69 @@ source("plot.miss.R")
 plot.miss(data, c(2,3,7,12,13))
 #Looks random
 
-#correlation between missingness and variables.
+#correlation between missingness in host response rate and other variables
 resp_miss <-is.na(data$host_response_rate)
 cor(data[,-c(2,4,5,6)],resp_miss,use= "pairwise")
 
 par(mfrow = c(1,2))
 boxplot(data$number_of_reviews~ resp_miss)
-#missingness not dep on no. of reviews
+#missingness not obviously dep on no. of reviews
 boxplot(data$reviews_per_month~ resp_miss)
 #missingness dep on revs per month so MAR as median doesn't lie inside the IQR
 ```
 
 ```{r}
+## Missingness in host response rate
+
+# Relationship with reviews and listings:
+grid.arrange(
+ggplot(aes(x=resp_miss,y=number_of_reviews),data=data) + geom_boxplot() + coord_flip(),
+ggplot(aes(x=resp_miss,y=reviews_per_month),data=data) + geom_boxplot() + coord_flip()
+)
+data %>% filter(host_listings_count<100) %>%
+  ggplot(aes(x=is.na(host_response_rate),y=host_listings_count)) + geom_boxplot() + coord_flip()
+
+par(mfrow=c(1,2))
+bins_revs <- quantile( data$number_of_reviews, prob = (0:10)/10 )
+bins_revs_miss <- rep( 0, 10 )
+for( i in 1:10 )
+  bins_revs_miss[i] <- sum( resp_miss[data$number_of_reviews>=bins_revs[i] &
+                                      data$number_of_reviews<bins_revs[i+1]] )
+plot(x=bins_revs[1:10],y=bins_revs_miss,xlab="Number of reviews",
+     ylab="Missing response rate values",pch=20)
+
+bins_revs2 <- quantile( data$reviews_per_month, prob = (0:10)/10, na.rm=T )
+bins_revs_miss2 <- rep( 0, 10 )
+for( i in 1:10 )
+  bins_revs_miss2[i] <- sum( resp_miss[na.omit(data$reviews_per_month)>=bins_revs2[i] &
+                                       na.omit(data$reviews_per_month)<bins_revs2[i+1]] )
+plot(x=bins_revs2[1:10],y=bins_revs_miss2,xlab="Reviews per month",
+     ylab="Missing response rate values",pch=20)
+
+# Check relationship with factor variables:
+round(prop.table(xtabs(~ resp_miss + neighbourhood, data),2),2)
+round(prop.table(xtabs(~ resp_miss + room_type, data),2),2)
+round(prop.table(xtabs(~ resp_miss + property_type, data),2),2)
+
+
+# missingness of host response rate seems to depend on frequency/number of reviews and number of listings a host has
+# also varies across neighbourhood and type of property
+# most likely MAR
+```
+Summary of missing data:
+
+* Missing values in 5 variables: number of property listings, host response rate, number of bathrooms, reviews per month and property rating
+* 88.0% of total observations are complete
+* Host response rate has 11.7% data missing, while the other variables have less than 0.5% missing
+* Missingness in host response rate depends on frequency of reviews, number of listings, location and type of property, so is likely to be MAR instead of MCAR
+* Tiny proportions in other variables means missing values can be omitted without analysis being affected
+
+
+```{r}
 #Changing column names
 colnames(data)<-c("price","resp_rate","list_count","n_hood","prop_type","room_type", "bathrooms", "accommodates", "guests", "min_nights", "num_reviews", "revs_month", "revs_rating", "avail_30")
 ```
+
 
 ```{r}
 #Correlation matrix
@@ -149,9 +202,22 @@ for(v in cvars[])boxplot(data[,v], main = v, las = 2)
 Plotting our variables against price gives us an idea of any problems (outliers, unrealistic values etc.) or features of the data that we didn't detect in our summaries.
 
 ```{r, echo=FALSE}
+#Continous variables
 par(mfrow=c(3,4))
 for(v in cvars[-1])plot(data[,v], data$price, xlab =v, ylab="Price")
 ```
+
+```{r}
+#Factors
+grid.arrange(ggplot(data,aes(price,n_hood))+geom_boxplot()+
+               labs(x="Daily price",y="Neighbourhood"),
+             ggplot(data,aes(price,prop_type))+geom_boxplot()+
+               labs(x="Daily price",y="Property"),
+             ggplot(data,aes(price,room_type))+geom_boxplot()+
+               labs(x="Daily price",y="Room type"),
+             ncol=2)
+```
+
 
 ```{r}
 plot(density(data$price))
@@ -199,6 +265,10 @@ AIC(best_lm2)
 par(mfrow=c(2,2))
 plot(best_lm1)
 
+#Box-Cox transformation plot
+boxcox(best_lm1, lambda=seq(0,0.1,0.01))
+#95% CI for lambda includes 0, so log transformation suitable
+
 #Model with log transform of response variable.
 log_best_lm1 <- update(best_lm1, log(.)~.)
 AIC(log_best_lm1)
@@ -242,6 +312,7 @@ par(mfrow = c(2,2))
 plot(best_gam_mod)
 
 #Gamma model with log transform on price
+### (won't link function already log price? so would this log it twice? -V)
 best_log_gam_mod <- update(best_gam_mod, log(.)~.)
 summary(best_log_gam_mod)
 AIC(best_log_gam_mod)
@@ -310,6 +381,14 @@ par(mfrow = c(2,2))
 plot(best_log_gam_mod)
 par(mfrow = c(2,2))
 plot(best_log_gau_mod)
+
+par(mfrow = c(2,2))
+plot(predict(best_log_gam_mod),resid(best_log_gam_mod),pch=20,
+     xlab="Linear predictor",ylab="Deviance residuals")
+plot(predict(best_log_gau_mod),resid(best_log_gau_mod),pch=20,
+     xlab="Linear predictor",ylab="Deviance residuals")
+qqnorm(resid(best_log_gam_mod))
+qqnorm(resid(best_log_gau_mod))
 ```
 Linear and Gaussian model has better diagnostic plots compared to gamma, and I think Gaussian model has better diagnostic plots compared to linear model. So we choose the Gaussian model, which also gives lowest AIC??
 
@@ -320,6 +399,209 @@ We see all variables are significant except for min nights.
 
 
 # Question 2
+
+Initial thoughts / stuff for report:
+
+* Want to predict whether or not there is availability within the next 30 days based on the variables provided - binary variable can be used as response
+* Other variables that might be important to know: 
+  + Host availability in next 30 days
+  + Amount of advanced notice required between booking and staying
+  + Season/time of year, e.g. during carnival or not (but might only be needed if we wanted to generalise prediction rather as data is taken from one point in time)
+* Consider prediction error and cross-validation
+* Misclassification rates suitable for binary/categorical responses to measure accuracy of prediction
+* Since we are interested in prediction, don't want to remove variables purely on the basis that they aren't significant. But also don't want to overfit the model.
+
+```{r}
+# Could try models with ratio of guests : bathrooms to reduce correlation between guests,
+# accommodates & bathrooms
+data %>% filter(bathrooms>0) %>%
+  mutate(guestbath_ratio=guests/bathrooms) -> data2
+summary(data2$guestbath_ratio)
+```
+
+```{r}
+# Create new variable for whether or not there is at least 1 day available in next month
+data %>% mutate(avail = factor(ifelse(avail_30 < 1, 0, 1))) -> data
+data2 %>% mutate(avail = factor(ifelse(avail_30 < 1, 0, 1))) -> data2
+summary(data$avail)
+```
+
+```{r}
+par(mfrow=c(3,5))
+for(v in cvars[-11]) boxplot(data[,v],data$avail, ylab =v, main = c("Availability and", v))
+```
+
+```{r}
+# Exploratory data analysis
+# Factors:
+round(prop.table(xtabs( ~ avail + n_hood, data ),2),2)
+round(prop.table(xtabs( ~ avail + prop_type, data ),2),2)
+round(prop.table(xtabs( ~ avail + room_type, data ),2),2)
+  # type of property seems to affect availability
+```
+
+
+```{r,echo=F}
+# Continuous variables:
+par(mfrow=c(2,2))
+price_avail <- xtabs( ~ avail + price, data )
+prob_price  <- price_avail[2,] / ( price_avail[1,] + price_avail[2,])
+plot( sort( unique( data$price ) ), prob_price, pch=19,
+      xlab="Daily price", ylab="Probability of being available")
+
+resp_avail <- xtabs( ~ avail + resp_rate, data )
+prob_resp  <- resp_avail[2,] / ( resp_avail[1,] + resp_avail[2,])
+plot( sort( unique( data$resp_rate ) ), prob_resp, pch=19,
+      xlab="Host response rate", ylab="Probability of being available")
+
+list_avail <- xtabs( ~ avail + list_count, data )
+prob_list  <- list_avail[2,] / ( list_avail[1,] + list_avail[2,])
+plot( sort( unique( data$list_count ) ), prob_list, pch=19,
+      xlab="Number of listings", ylab="Probability of being available")
+
+bath_avail <- xtabs( ~ avail + bathrooms, data )
+prob_bath  <- bath_avail[2,] / ( bath_avail[1,] + bath_avail[2,])
+plot( sort( unique( data$bathrooms ) ), prob_bath, pch=19,
+      xlab="# bathrooms", ylab="Probability of being available")
+
+accomm_avail <- xtabs( ~ avail + accommodates, data )
+prob_accomm  <- accomm_avail[2,] / ( accomm_avail[1,] + accomm_avail[2,])
+plot( sort( unique( data$accommodates ) ), prob_accomm, pch=19,
+      xlab="People property can accommodate", ylab="Probability of being available")
+
+guest_avail <- xtabs( ~ avail + guests, data )
+prob_guest  <- guest_avail[2,] / ( guest_avail[1,] + guest_avail[2,])
+plot( sort( unique( data$guests ) ), prob_guest, pch=19,
+      xlab="Number of guests", ylab="Probability of being available")
+
+min_avail <- xtabs( ~ avail + min_nights, data )
+prob_min  <- min_avail[2,] / ( min_avail[1,] + min_avail[2,])
+plot( sort( unique( data$min_nights ) ), prob_min, pch=19,
+      xlab="Min length of stay", ylab="Probability of being available")
+
+revs_avail <- xtabs( ~ avail + revs_month, data )
+prob_revs  <- revs_avail[2,] / ( revs_avail[1,] + revs_avail[2,])
+plot( sort( unique( data$revs_month ) ), prob_revs, pch=19,
+      xlab="Reviews per month", ylab="Probability of being available")
+```
+```{r}
+# Create test and training datasets
+set.seed(1804)
+n=dim(data)[1]
+i=sample(1:n,0.2*n)
+
+test=data[i,] #20% of dataset
+train=data[-i,] #80% of dataset
+```
+
+Omitted variables: num_reviews (highly correlated with revs_month), accommodates (highly correlated with guests). Might also be appropriate to exclude number of listings as it shouldn't really help predict availability of individual properties (but kept in for now)?
+
+```{r}
+# Response variable is binary so use GLM with binomial EF and logit link
+# Build model for prediction using training data
+
+# (Almost) Full model
+log_mod1 <- glm(avail ~ price + list_count + resp_rate + n_hood + prop_type + 
+                room_type + bathrooms + guests + min_nights + revs_month + 
+                revs_rating, family=binomial, data=na.omit(train))
+summary(log_mod1)
+
+# Small model (not very useful for prediction purposes, just for comparison)
+drop1(log_mod1)
+log_mod1b <- glm(price + prop_type + guests + min_nights + revs_month, 
+                 family=binomial, data=train)
+```
+
+Most variables are associated with a higher odds of availability; for example, a property costing £50 more than an otherwise identical one is 6.5% more likely to have availability in the next month. However, a higher rating and longer minimum stay are associated with a lower likelihood of a property being available. These relationships are what we would expect in the context. While only price, minimum stay and monthly reviews are significant at the 5% level, the other variables still seem important for predictive purposes and so will be kept in the model.
+
+```{r}
+## Diagnostics
+
+# Is independence assumption reasonable in this context ? (probably??)
+# Fitted Values vs Residuals
+binnedplot( log_mod1$fitted.values, residuals(log_mod1, type="deviance"),
+            nclass = 15, ylab="Average deviance residuals" )
+
+par(mfrow=c(2,3))
+binnedplot( na.omit(train)$price, residuals(log_mod1, type="deviance"),
+            nclass = 15, xlab="Daily price" )
+binnedplot( na.omit(train)$guests, residuals(log_mod1, type="deviance"),
+            nclass = 15, xlab="Number of guests" )
+binnedplot( na.omit(train)$min_nights, residuals(log_mod1, type="deviance"),
+            nclass = 15, xlab="Minimum length of stay" )
+binnedplot( na.omit(train)$revs_month, residuals(log_mod1, type="deviance"),
+            nclass = 15, xlab="Reviews per month" )
+binnedplot( na.omit(train)$revs_rating, residuals(log_mod1, type="deviance"),
+            nclass = 15, xlab="Rating" )
+# Doesn't look that great tbh :/ (points supposed to lie within grey lines)
+```
+```{r}
+# Try model using accommodates & guestbath_ratio to see if there are any changes
+n2=dim(data2)[1]
+j=sample(1:n2,0.1*n2)
+
+testB=data2[j,]
+trainB=data2[-j,]
+
+log_mod2 <- glm(avail ~ price + list_count + resp_rate + n_hood + prop_type + 
+                room_type + accommodates + guestbath_ratio + min_nights + revs_month + 
+                revs_rating, family=binomial, data=trainB)
+# all variables could be useful for prediction
+
+# Fitted Values vs Residuals
+binnedplot( log_mod2$fitted.values, residuals(log_mod2, type="deviance"),
+            nclass = 15, ylab="Average deviance residuals" )
+# still pretty bad
+```
+```{r}
+# Prediction error in training data
+
+#Function to calculate misclassification rate
+mis.class=function(observed,y,model,p=0.5) {
+    pred=predict(model,observed,type="response") #probability predicted by model
+    xx=xtabs(~y+(pred>p))
+    (xx[1,2]+xx[2,1])/(sum(xx)) #proportion correctly predicted
+}
+
+train2 <- na.omit(train)
+mis.class(train2,train2$avail,log_mod1)
+# 11.52% misclassified
+
+train %>% drop_na(revs_month,revs_rating) -> train3
+mis.class(train3,train3$avail,log_mod1b)
+# 15.09% - confirms that simpler model is not better for prediction
+
+trainB2 <- na.omit(trainB)
+mis.class(trainB2,trainB2$avail,log_mod2)
+# 11.89% - first model is better for prediction
+```
+
+```{r}
+# Prediction error in test data
+
+test2 <- na.omit(test)
+pred=predict(log_mod1,test2,type="response")
+xx=xtabs(~test2$avail+(pred>0.5))
+xx
+mis.class(test2,test2$avail,log_mod1)
+# 12.72% - only 1.2 percentage points higher than training data
+```
+
+```{r,warning=F}
+# Leave-one-out prediction error 
+# since the response is a binary variable, an appropriate cost function is:
+cost <- function(r, pi = 0) mean(abs(r-pi) > 0.5)
+# corresponds to misclassification rate
+
+cv.glm(train2, log_mod1, cost)$delta[1]
+# 11.52% (same as misclass rate in model)
+```
+
+* Model correctly predicts whether or not there is availability in the next 30 days almost 9 times out of 10 (88.5% of the time)
+* While the independence assumption of the logistic regression model seems reasonable, linearity seems questionable (might be worth investigating transformations of explanatory variables but not sure how to identify these when response is binary?)
+* Other factors like the host's availablility in the next 30 days and the amount of advanced notice required could improve the prediction if included in the model
+* If we were to generalise the prediction to availability at different points in time, it might also be important to consider seasonal effects, for example demand for holiday lets in Rio is likely to be higher during the carnival season.
+
 
 
 # Question 3
