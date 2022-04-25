@@ -242,8 +242,8 @@ plot(diff, data$price)
 #48 properties where guests included in price is larger than accommodates.
 sum((diff < 0))
 
-data %>% filter(data$guests > data$accommodates)
-#Maybe we should remove these 48 observations?? 
+#Removing the 48 observations where guests > accomodates. 
+data <- data %>% filter(data$guests <= data$accommodates)
 ```
 
 ```{r}
@@ -252,49 +252,46 @@ full_lm1 <- lm(price ~. -num_reviews, data = na.omit(data))
 #Full linear model with number of reviews
 full_lm2 <- lm(price ~. -revs_month, data = na.omit(data))
 
+#Full linear model with accommodates and reviews per month - gives best AIC
+full_lm3 <- update(full_lm1, .~. -guests)
+#Full linear model with guests and reviews per month
+full_lm4 <- update(full_lm1, .~. -accommodates)
+AIC(full_lm3)
+AIC(full_lm4)
+
+#No better when trying accommodates/guests with number of reviews.
+
 #Finding "best" linear model by comparing AIC using 'step' function 
 #with reviews per month
-best_lm1 <- step(full_lm1, trace = F)
-AIC(best_lm1)
-#with number of reviews
-best_lm2 <- step(full_lm2, trace = F)
-AIC(best_lm2)
+best_lm <- step(full_lm3, trace = F)
+AIC(best_lm)
 
-#best_lm1, model with number of reviews gave smaller AIC.
 #Diagnostic plots
 par(mfrow=c(2,2))
-plot(best_lm1)
+plot(best_lm)
 
 #Box-Cox transformation plot
-boxcox(best_lm1, lambda=seq(0,0.1,0.01))
+boxcox(best_lm, lambda=seq(0,0.1,0.01))
 #95% CI for lambda includes 0, so log transformation suitable
 
 #Model with log transform of response variable.
-log_best_lm1 <- update(best_lm1, log(.)~.)
-AIC(log_best_lm1)
+log_best_lm <- update(best_lm, log(.)~.)
+AIC(log_best_lm)
 
 #Using step to find best linear model by comparing AIC
-best_lm <- step(log_best_lm1, trace = F)
+best_lm <- step(log_best_lm, trace = F)
 summary(best_lm)
 AIC(best_lm)
 #Diagnostic plots
 par(mfrow=c(2,2))
 plot(best_lm)
-
-#Checking interactions - improves model but interaction not significant.
-int_lm<-step(best_lm,scope=list(upper=~.+bathrooms*accommodates*guests,lower=~1),trace=F)
-summary(int_lm)
-AIC(int_lm)
-#Diagnostic plots
-par(mfrow=c(2,2))
-plot(int_lm)
 ```
 We see that only some variables are statistically significant in predicting price, namely: list_count, neighbourhood, property type, room type, bathrooms, accommodates, guests, revs_month, revs_rating and avail_30.
 
 Final linear model gave AIC = 4084, but only has r-squared = 54%.
 
 ```{r}
-#Trying a Gamma distribution first beacuse that's what price's density plot looked like.
+#Trying a Gamma distribution first because that's what price's density plot looked like.
 
 #Full Gamma model with reviews per month
 gam_mod1 <- glm(price ~. - num_reviews, family = Gamma(link = "log"), data = na.omit(data))
@@ -304,8 +301,17 @@ AIC(gam_mod1)
 gam_mod2 <- glm(price ~. - revs_month, family = Gamma(link = "log"), data = data)
 AIC(gam_mod2)
 
+#with accommodates - lower AIC
+gam_mod3 <- update(gam_mod1, .~. -guests)
+AIC(gam_mod3)
+summary(gam_mod3)
+#with guests
+gam_mod4 <- update(gam_mod1, .~. -accommodates)
+AIC(gam_mod4)
+summary(gam_mod4)
+
 #Step to find best gamma model
-best_gam_mod <- step(gam_mod1, trace = F)
+best_gam_mod <- step(gam_mod3, trace = F)
 AIC(best_gam_mod)
 #Diagnostic plots
 par(mfrow = c(2,2))
@@ -364,6 +370,7 @@ AIC(test)
 ```
 Gaussian model with log transform on price gives AIC = 4072, diagnostic plots also look good.
 
+We tried inverse gaussian, model wasn't as good. Normally for highly right skewed.
 ```{r}
 #Inverse Gaussian models, may be more suited as variables are highly right skewed
 #Not too sure how to do inverse gaussian
@@ -371,6 +378,11 @@ inv_gau_mod1 <- glm(price ~. - num_reviews, family = inverse.gaussian(link = "lo
 summary(inv_gau_mod1)
 par(mfrow = c(2,2))
 plot(inv_gau_mod1)
+
+test <- update(inv_gau_mod1, log(.)~.)
+summary(test)
+par(mfrow = c(2,2))
+plot(test)
 ```
 
 ```{r}
@@ -392,10 +404,17 @@ qqnorm(resid(best_log_gau_mod))
 ```
 Linear and Gaussian model has better diagnostic plots compared to gamma, and I think Gaussian model has better diagnostic plots compared to linear model. So we choose the Gaussian model, which also gives lowest AIC??
 
+we choose the log linear model!
 ```{r}
-summary(best_log_gau_mod)
+summary(best_lm)
 ```
-We see all variables are significant except for min nights.
+We see all variables are significant.
+
+```{r}
+#Confidence Intervals
+cbind(coef(best_lm),exp(confint(best_lm)))
+```
+
 
 
 # Question 2
@@ -506,9 +525,17 @@ log_mod1 <- glm(avail ~ price + list_count + resp_rate + n_hood + prop_type +
                 revs_rating, family=binomial, data=na.omit(train))
 summary(log_mod1)
 
+log_mod2 <- glm(avail ~ price + list_count + resp_rate + n_hood + prop_type + 
+                room_type + bathrooms + accommodates + min_nights + revs_month + 
+                revs_rating, family=binomial, data=na.omit(train))
+summary(log_mod2)
+
+log_mod3 <- step(log_mod1, trace = FALSE)
+summary(log_mod3)
+
 # Small model (not very useful for prediction purposes, just for comparison)
 drop1(log_mod1)
-log_mod1b <- glm(price + prop_type + guests + min_nights + revs_month, 
+log_mod1b <- glm(avail ~ price + prop_type + guests + min_nights + revs_month, 
                  family=binomial, data=train)
 ```
 
@@ -519,22 +546,23 @@ Most variables are associated with a higher odds of availability; for example, a
 
 # Is independence assumption reasonable in this context ? (probably??)
 # Fitted Values vs Residuals
-binnedplot( log_mod1$fitted.values, residuals(log_mod1, type="deviance"),
+binnedplot( log_mod3$fitted.values, residuals(log_mod3, type="deviance"),
             nclass = 15, ylab="Average deviance residuals" )
 
 par(mfrow=c(2,3))
-binnedplot( na.omit(train)$price, residuals(log_mod1, type="deviance"),
+binnedplot( na.omit(train)$price, residuals(log_mod3, type="deviance"),
             nclass = 15, xlab="Daily price" )
-binnedplot( na.omit(train)$guests, residuals(log_mod1, type="deviance"),
+binnedplot( na.omit(train)$guests, residuals(log_mod3, type="deviance"),
             nclass = 15, xlab="Number of guests" )
-binnedplot( na.omit(train)$min_nights, residuals(log_mod1, type="deviance"),
+binnedplot( na.omit(train)$min_nights, residuals(log_mod3, type="deviance"),
             nclass = 15, xlab="Minimum length of stay" )
-binnedplot( na.omit(train)$revs_month, residuals(log_mod1, type="deviance"),
+binnedplot( na.omit(train)$revs_month, residuals(log_mod3, type="deviance"),
             nclass = 15, xlab="Reviews per month" )
-binnedplot( na.omit(train)$revs_rating, residuals(log_mod1, type="deviance"),
+binnedplot( na.omit(train)$revs_rating, residuals(log_mod3, type="deviance"),
             nclass = 15, xlab="Rating" )
 # Doesn't look that great tbh :/ (points supposed to lie within grey lines)
 ```
+
 ```{r}
 # Try model using accommodates & guestbath_ratio to see if there are any changes
 n2=dim(data2)[1]
@@ -553,6 +581,7 @@ binnedplot( log_mod2$fitted.values, residuals(log_mod2, type="deviance"),
             nclass = 15, ylab="Average deviance residuals" )
 # still pretty bad
 ```
+
 ```{r}
 # Prediction error in training data
 
@@ -608,25 +637,75 @@ cv.glm(train2, log_mod1, cost)$delta[1]
 
 ```{r}
 summary(data$revs_rating)
+prop.table(xtabs(~data$revs_rating))
 ```
-We decide to take ratings above or equal to the 3rd quartile to mean very high review scores.
+We decide to take ratings equal to 100 to mean very high review scores. (Top 15%)
+
+```{r}
+densityPlot(data$revs_rating)
+```
+
 
 ```{r}
 #Creating new variable high_rating if observation has a very high review score.
 high_rating <- data$revs_rating
-high_rating[data$revs_rating >= 98] <- "TRUE"
-high_rating[data$revs_rating < 98] <- "FALSE"
+high_rating[data$revs_rating >= 98] <- 1
+high_rating[data$revs_rating < 98] <- 0
 data <- data %>% mutate(high_rating = high_rating)
-data$high_rating <- as.logical(data$high_rating)
+data$high_rating <- as.numeric(data$high_rating)
 ```
 
 ```{r}
 #Trying out linear model
 full_lm <- lm(high_rating ~. - num_reviews, data = data)
-summary(m)
 AIC(full_lm)
 #Diagnostic plots
 par(mfrow = c(2,2))
 plot(m)
 ```
+
+```{r}
+#Continous variables
+par(mfrow=c(3,4))
+for(v in cvars)plot(data[,v], data$revs_rating, xlab =v, ylab="Rev rating")
+```
+
+```{r}
+
+test1 <- glm(high_rating ~. -revs_rating-avail-revs_month+I(price^2), family = binomial(link = "logit"), data = data)
+summary(test1)
+
+step1 <- step(test1, trace = FALSE)
+summary(step1)
+
+## Diagnostics
+
+# Is independence assumption reasonable in this context ? (probably??)
+# Fitted Values vs Residuals
+
+binnedplot( step1$fitted.values, residuals(step1, type="deviance"),
+            nclass = 15, ylab="Average deviance residuals" )
+
+par(mfrow=c(2,3))
+binnedplot( na.omit(data)$price, residuals(step1, type="deviance"),
+            nclass = 15, xlab="Daily price" )
+binnedplot( na.omit(data)$resp_rate, residuals(step1, type="deviance"),
+            nclass = 15, xlab="Daily price" )
+binnedplot( na.omit(data)$list_count, residuals(step1, type="deviance"),
+            nclass = 15, xlab="Daily price" )
+binnedplot( na.omit(data)$bathrooms, residuals(step1, type="deviance"),
+            nclass = 15, xlab="Daily price" )
+binnedplot( na.omit(data)$accommodates, residuals(step1, type="deviance"),
+            nclass = 15, xlab="Daily price" )
+binnedplot( na.omit(data)$guests, residuals(step1, type="deviance"),
+            nclass = 15, xlab="Number of guests" )
+binnedplot( na.omit(data)$min_nights, residuals(step1, type="deviance"),
+            nclass = 15, xlab="Minimum length of stay" )
+binnedplot( na.omit(data)$num_reviews, residuals(step1, type="deviance"),
+            nclass = 15, xlab="Number of reviews" )
+binnedplot( na.omit(data)$avail_30, residuals(step1, type="deviance"),
+            nclass = 15, xlab="Available 30" )
+# Doesn't look that great tbh :/ (points supposed to lie within grey lines)
+```
+
 
