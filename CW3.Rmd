@@ -21,10 +21,9 @@ data <- read.csv("AirnbnbRio.csv")
 old <- theme_set(theme_bw()) #set ggplot theme throughout doc
 ```
 
-
-```{r}
 ## Cleaning data
 
+```{r}
 #Converting character variables to factor variables
 data$host_response_rate <- as.factor(data$host_response_rate)
 data$neighbourhood <- as.factor(data$neighbourhood)
@@ -41,13 +40,35 @@ data$host_response_rate <- as.numeric(data$host_response_rate)
 #Converting all of the integer variables to numerical variables
 data <- data %>% mutate(across(.cols=where(is.integer), .fns=as.numeric))
 
+#Changing column names
+colnames(data)<-c("price","resp_rate","list_count","n_hood","prop_type","room_type", "bathrooms", "accommodates", "guests", "min_nights", "num_reviews", "revs_month", "revs_rating", "avail_30")
+
 summary(data)
 ```
-
-
+Investigating variables and outliers:
 ```{r}
+data %>% filter(min_nights>50) %>% arrange(desc(min_nights))
+# airbnb founded in 2008 so hosts can only have had properties listed for max 10 years by April 2018
+# min length of stay:
+## 1000 days: 99 reviews but only 2 guests per stay so would take over 100 years to accummulate this many reviews -> suggests some sort of error/contradiction
+## 365 days: 65 reviews, 4 guests per stay => 4 reviews per year, >16 years to accummulate 67 reviews
+
+#Removing contradictory outliers for min_nights
+data <- subset(data, min_nights<365)
+
+#New variable diff: difference between accommodates and guests
+diff <- data$accommodates - data$guests
+summary(diff)
+sum((diff < 0))
+# 48 properties where guests included in price is larger than accommodates
+# should always have guests > accommodates
+
+#Removing the 48 observations where guests > accommodates 
+data <- data %>% filter(data$guests <= data$accommodates)
+```
 ## Investigating missingness
 
+```{r}
 #Proportion of missingness in data set for each variable
 apply(is.na(data),2,mean)
 #the proportion of complete cases
@@ -56,50 +77,43 @@ mean(apply(is.na(data),1,sum)==0)
 source("plot.miss.R")
 plot.miss(data, c(2,3,7,12,13))
 #Looks random
-
-#correlation between missingness in host response rate and other variables
-resp_miss <-is.na(data$host_response_rate)
-cor(data[,-c(2,4,5,6)],resp_miss,use= "pairwise")
-
-par(mfrow = c(1,2))
-boxplot(data$number_of_reviews~ resp_miss)
-#missingness not obviously dep on no. of reviews
-boxplot(data$reviews_per_month~ resp_miss)
-#missingness dep on revs per month so MAR as median doesn't lie inside the IQR
 ```
 
+Missingness in host response rate:
 ```{r}
-## Missingness in host response rate
+#Correlation between missingness in host response rate and other variables
+resp_miss <-is.na(data$resp_rate)
+cor(data[,-c(2,4,5,6)],resp_miss,use= "pairwise")
 
-# Relationship with reviews and listings:
+#Relationship with reviews and listings:
 grid.arrange(
-ggplot(aes(x=resp_miss,y=number_of_reviews),data=data) + geom_boxplot() + coord_flip(),
-ggplot(aes(x=resp_miss,y=reviews_per_month),data=data) + geom_boxplot() + coord_flip()
+ggplot(aes(x=resp_miss,y=num_reviews),data=data) + geom_boxplot() + coord_flip(),
+ggplot(aes(x=resp_miss,y=revs_month),data=data) + geom_boxplot() + coord_flip()
 )
-data %>% filter(host_listings_count<100) %>%
-  ggplot(aes(x=is.na(host_response_rate),y=host_listings_count)) + geom_boxplot() + coord_flip()
+data %>% filter(list_count<100) %>%
+  ggplot(aes(x=is.na(resp_rate),y=list_count)) + geom_boxplot() + coord_flip()
 
 par(mfrow=c(1,2))
-bins_revs <- quantile( data$number_of_reviews, prob = (0:10)/10 )
+bins_revs <- quantile( data$num_reviews, prob = (0:10)/10 )
 bins_revs_miss <- rep( 0, 10 )
 for( i in 1:10 )
-  bins_revs_miss[i] <- sum( resp_miss[data$number_of_reviews>=bins_revs[i] &
-                                      data$number_of_reviews<bins_revs[i+1]] )
+  bins_revs_miss[i] <- sum( resp_miss[data$num_reviews>=bins_revs[i] &
+                                      data$num_reviews<bins_revs[i+1]] )
 plot(x=bins_revs[1:10],y=bins_revs_miss,xlab="Number of reviews",
      ylab="Missing response rate values",pch=20)
 
-bins_revs2 <- quantile( data$reviews_per_month, prob = (0:10)/10, na.rm=T )
+bins_revs2 <- quantile( data$revs_month, prob = (0:10)/10, na.rm=T )
 bins_revs_miss2 <- rep( 0, 10 )
 for( i in 1:10 )
-  bins_revs_miss2[i] <- sum( resp_miss[na.omit(data$reviews_per_month)>=bins_revs2[i] &
-                                       na.omit(data$reviews_per_month)<bins_revs2[i+1]] )
+  bins_revs_miss2[i] <- sum( resp_miss[na.omit(data$revs_month)>=bins_revs2[i] &
+                                       na.omit(data$revs_month)<bins_revs2[i+1]] )
 plot(x=bins_revs2[1:10],y=bins_revs_miss2,xlab="Reviews per month",
      ylab="Missing response rate values",pch=20)
 
-# Check relationship with factor variables:
-round(prop.table(xtabs(~ resp_miss + neighbourhood, data),2),2)
+#Relationship with factor variables:
+round(prop.table(xtabs(~ resp_miss + n_hood, data),2),2)
 round(prop.table(xtabs(~ resp_miss + room_type, data),2),2)
-round(prop.table(xtabs(~ resp_miss + property_type, data),2),2)
+round(prop.table(xtabs(~ resp_miss + prop_type, data),2),2)
 
 
 # missingness of host response rate seems to depend on frequency/number of reviews and number of listings a host has
@@ -115,12 +129,9 @@ Summary of missing data:
 * Tiny proportions in other variables means missing values can be omitted without analysis being affected
 
 
-```{r}
-#Changing column names
-colnames(data)<-c("price","resp_rate","list_count","n_hood","prop_type","room_type", "bathrooms", "accommodates", "guests", "min_nights", "num_reviews", "revs_month", "revs_rating", "avail_30")
-```
+## Exploratory data analysis
 
-
+Correlations between variables:
 ```{r}
 #Correlation matrix
 cvars<-c(colnames(data)[-c(4,5,6)])
@@ -147,7 +158,6 @@ High correlations are as follows:
 
 Response rate, host listing counts, review rating and 30 day availability appear to not be strongly correlated with any of the other factors.
 
-
 ```{r}
 #Histograms and boxplots of variables
 par(mfrow = c(3,5))
@@ -158,15 +168,7 @@ barplot(xtabs(~data$room_type),las= 1,main = c("Barplot of ","Room Type"))
 ```
 We see that all variables are right-skewed except for revs_rating and avail_30 which are left-skewed (and neighbourhood which looks normally distributed).
 
-```{r}
-#Removes large min nights values from dataset
-sensible_nights <- data$min_nights[data$min_nights<200]
-xtabs(~sensible_nights)
-hist(sensible_nights)
-prop.table(xtabs(~data$bathrooms))
-```
-
-# Discussing histograms & distributions of data
+Discussing histograms & distributions of data:
 
 * Price: right-skewed
 * Response Rate: majority are close to 0 
@@ -184,13 +186,13 @@ prop.table(xtabs(~data$bathrooms))
 * Available 30: somewhat uniform in middle with very large tails
 
 ```{r}
-#also checking for skew with density plots
+#Also checking for skew with density plots
 par(mfrow = c(3,5))
 for(v in cvars[])densityPlot(data[,v], xlab =v, main = c("Density of", v))
 ```
 
 ```{r, echo=FALSE}
-#investigating outliers with boxplots
+#Investigating outliers with boxplots
 par(mfrow = c(3,4))
 for(v in cvars[])boxplot(data[,v], main = v, las = 2)
 #resp_rate, list_count, bathrooms, accommodates, guests, revs_month, revs_rating and avail_30
@@ -218,7 +220,6 @@ grid.arrange(ggplot(data,aes(price,n_hood))+geom_boxplot()+
              ncol=2)
 ```
 
-
 ```{r}
 plot(density(data$price))
 ggqqplot(data$price)
@@ -231,19 +232,6 @@ Price looks almost like a gamma distribution
 ```{r}
 #Variables that have correlation larger than 0.25 with price
 which(cors[,1]>0.25)
-```
-
-```{r}
-#New variable diff, difference between accommodates and guests.
-diff <- data$accommodates - data$guests
-summary(diff)
-plot(diff, data$price)
-
-#48 properties where guests included in price is larger than accommodates.
-sum((diff < 0))
-
-#Removing the 48 observations where guests > accomodates. 
-data <- data %>% filter(data$guests <= data$accommodates)
 ```
 
 ```{r}
@@ -431,17 +419,8 @@ Initial thoughts / stuff for report:
 * Since we are interested in prediction, don't want to remove variables purely on the basis that they aren't significant. But also don't want to overfit the model.
 
 ```{r}
-# Could try models with ratio of guests : bathrooms to reduce correlation between guests,
-# accommodates & bathrooms
-data %>% filter(bathrooms>0) %>%
-  mutate(guestbath_ratio=guests/bathrooms) -> data2
-summary(data2$guestbath_ratio)
-```
-
-```{r}
 # Create new variable for whether or not there is at least 1 day available in next month
 data %>% mutate(avail = factor(ifelse(avail_30 < 1, 0, 1))) -> data
-data2 %>% mutate(avail = factor(ifelse(avail_30 < 1, 0, 1))) -> data2
 summary(data$avail)
 ```
 
@@ -503,27 +482,29 @@ prob_revs  <- revs_avail[2,] / ( revs_avail[1,] + revs_avail[2,])
 plot( sort( unique( data$revs_month ) ), prob_revs, pch=19,
       xlab="Reviews per month", ylab="Probability of being available")
 ```
+
 ```{r}
 # Create test and training datasets
 set.seed(1804)
 n=dim(data)[1]
-i=sample(1:n,0.2*n)
+i=sample(1:n,0.1*n)
 
-test=data[i,] #20% of dataset
-train=data[-i,] #80% of dataset
+test=data[i,] #10% of dataset
+train=data[-i,] #90% of dataset
 ```
 
-Omitted variables: num_reviews (highly correlated with revs_month), accommodates (highly correlated with guests). Might also be appropriate to exclude number of listings as it shouldn't really help predict availability of individual properties (but kept in for now)?
+Omitted variables: num_reviews (highly correlated with revs_month), accommodates (highly correlated with guests). Might also be appropriate to exclude number of listings as it shouldn't really help predict availability of individual properties (but have kept it in for now)
 
 ```{r}
 # Response variable is binary so use GLM with binomial EF and logit link
 # Build model for prediction using training data
 
 # (Almost) Full model
-log_mod1 <- glm(avail ~ price + list_count + resp_rate + n_hood + prop_type + 
-                room_type + bathrooms + guests + min_nights + revs_month + 
-                revs_rating, family=binomial, data=na.omit(train))
+log_mod1 <- glm(avail ~ price + log(resp_rate) + n_hood + prop_type + 
+                room_type + log(guests) + bathrooms + min_nights + revs_month + 
+                revs_rating, family=binomial(link="logit"), data=na.omit(train))
 summary(log_mod1)
+# based on context, list count and bathrooms shouldn't affect property being available
 
 log_mod2 <- glm(avail ~ price + list_count + resp_rate + n_hood + prop_type + 
                 room_type + bathrooms + accommodates + min_nights + revs_month + 
@@ -537,6 +518,7 @@ summary(log_mod3)
 drop1(log_mod1)
 log_mod1b <- glm(avail ~ price + prop_type + guests + min_nights + revs_month, 
                  family=binomial, data=train)
+summary(data$revs_rating)
 ```
 
 Most variables are associated with a higher odds of availability; for example, a property costing £50 more than an otherwise identical one is 6.5% more likely to have availability in the next month. However, a higher rating and longer minimum stay are associated with a lower likelihood of a property being available. These relationships are what we would expect in the context. While only price, minimum stay and monthly reviews are significant at the 5% level, the other variables still seem important for predictive purposes and so will be kept in the model.
@@ -546,40 +528,61 @@ Most variables are associated with a higher odds of availability; for example, a
 
 # Is independence assumption reasonable in this context ? (probably??)
 # Fitted Values vs Residuals
-binnedplot( log_mod3$fitted.values, residuals(log_mod3, type="deviance"),
+binnedplot( log_mod1$fitted.values, residuals(log_mod1, type="deviance"),
             nclass = 15, ylab="Average deviance residuals" )
 
 par(mfrow=c(2,3))
-binnedplot( na.omit(train)$price, residuals(log_mod3, type="deviance"),
+binnedplot( na.omit(train)$price, residuals(log_mod1, type="deviance"),
             nclass = 15, xlab="Daily price" )
-binnedplot( na.omit(train)$guests, residuals(log_mod3, type="deviance"),
+binnedplot( na.omit(train)$resp_rate, residuals(log_mod1, type="deviance"),
+            nclass = 15, xlab="Response rate" )
+binnedplot( na.omit(train)$guests, residuals(log_mod1, type="deviance"),
             nclass = 15, xlab="Number of guests" )
-binnedplot( na.omit(train)$min_nights, residuals(log_mod3, type="deviance"),
+binnedplot( na.omit(train)$bathrooms, residuals(log_mod1, type="deviance"),
+            nclass = 15, xlab="Number of bathrooms" )
+binnedplot( na.omit(train)$min_nights, residuals(log_mod1, type="deviance"),
             nclass = 15, xlab="Minimum length of stay" )
-binnedplot( na.omit(train)$revs_month, residuals(log_mod3, type="deviance"),
+binnedplot( na.omit(train)$revs_month, residuals(log_mod1, type="deviance"),
             nclass = 15, xlab="Reviews per month" )
-binnedplot( na.omit(train)$revs_rating, residuals(log_mod3, type="deviance"),
+binnedplot( na.omit(train)$revs_rating, residuals(log_mod1, type="deviance"),
             nclass = 15, xlab="Rating" )
 # Doesn't look that great tbh :/ (points supposed to lie within grey lines)
+
+par(mfrow=c(2,2))
+plot(x=na.omit(train)$price,y=predict(log_mod1,type="link"),pch=20)
+plot(x=na.omit(train)$resp_rate,y=predict(log_mod1,type="link"),pch=20)
+plot(x=na.omit(train)$guests,y=predict(log_mod1,type="link"),pch=20)
+plot(x=na.omit(train)$bathrooms,y=predict(log_mod1,type="link"),pch=20)
+plot(x=na.omit(train)$min_nights,y=predict(log_mod1,type="link"),pch=20)
+plot(x=na.omit(train)$revs_month,y=predict(log_mod1,type="link"),pch=20)
+plot(x=na.omit(train)$revs_rating,y=predict(log_mod1,type="link"),pch=20)
 ```
-
 ```{r}
-# Try model using accommodates & guestbath_ratio to see if there are any changes
-n2=dim(data2)[1]
-j=sample(1:n2,0.1*n2)
+# Diagnostic plots version 3
+tmp <- na.omit(train) %>% dplyr::select_if(is.numeric) 
+predictors <- colnames(tmp)
+probs <- predict(log_mod3, type = "response")
+tmp <- tmp %>%
+  mutate(logit = log(probs/(1-probs))) %>%
+  gather(key = "predictors", value = "predictor.value", -logit)
+ggplot(tmp, aes(logit, predictor.value))+
+  geom_point(size = 0.5, alpha = 0.5) +
+  geom_smooth(method = "loess") + 
+  facet_wrap(~predictors, scales = "free_y")
 
-testB=data2[j,]
-trainB=data2[-j,]
+tmp_step <- na.omit(train) %>% dplyr::select(price,min_nights,revs_month)
+predictors_step <- c("price","min_nights","revs_month")
+probs_step <- predict(log_mod3, type = "response")
+tmp_step <- tmp_step %>%
+  mutate(logit = log(probs_step/(1-probs_step))) %>%
+  gather(key = "predictors_step", value = "predictor.value", -logit)
+ggplot(tmp_step, aes(logit, predictor.value))+
+  geom_point(size = 0.5, alpha = 0.5) +
+  geom_smooth(method = "loess") + 
+  facet_wrap(~predictors_step, scales = "free_y")
 
-log_mod2 <- glm(avail ~ price + list_count + resp_rate + n_hood + prop_type + 
-                room_type + accommodates + guestbath_ratio + min_nights + revs_month + 
-                revs_rating, family=binomial, data=trainB)
-# all variables could be useful for prediction
-
-# Fitted Values vs Residuals
-binnedplot( log_mod2$fitted.values, residuals(log_mod2, type="deviance"),
-            nclass = 15, ylab="Average deviance residuals" )
-# still pretty bad
+# not good :(
+# think vertical lines mean predictor doesn't really affect logit response?
 ```
 
 ```{r}
@@ -592,29 +595,22 @@ mis.class=function(observed,y,model,p=0.5) {
     (xx[1,2]+xx[2,1])/(sum(xx)) #proportion correctly predicted
 }
 
-train2 <- na.omit(train)
-mis.class(train2,train2$avail,log_mod1)
-# 11.52% misclassified
-
-train %>% drop_na(revs_month,revs_rating) -> train3
-mis.class(train3,train3$avail,log_mod1b)
-# 15.09% - confirms that simpler model is not better for prediction
-
-trainB2 <- na.omit(trainB)
-mis.class(trainB2,trainB2$avail,log_mod2)
-# 11.89% - first model is better for prediction
+#train2 <- na.omit(train)
+train %>% drop_na(revs_month,revs_rating,bathrooms,list_count) -> train2b
+mis.class(train,train$avail,log_mod1)
+# 11.54% misclassified
 ```
 
 ```{r}
 # Prediction error in test data
 
-test2 <- na.omit(test)
-pred=predict(log_mod1,test2,type="response")
-xx=xtabs(~test2$avail+(pred>0.5))
-xx
-mis.class(test2,test2$avail,log_mod1)
-# 12.72% - only 1.2 percentage points higher than training data
+#test2 <- na.omit(test)
+pred=predict(log_mod1,test,type="response")
+xtabs(~test$avail+(pred>0.5))
+mis.class(test,test$avail,log_mod1)
+# 12.44% - only 0.8 percentage points higher than training data
 ```
+
 
 ```{r,warning=F}
 # Leave-one-out prediction error 
@@ -633,21 +629,56 @@ cv.glm(train2, log_mod1, cost)$delta[1]
 
 
 
+```{r,include=F}
+# Try model using accommodates & guestbath_ratio to see if there are any changes
+
+# Could try models with ratio of guests : bathrooms to reduce correlation between guests,
+# accommodates & bathrooms
+data %>% filter(bathrooms>0) %>%
+  mutate(guestbath_ratio=guests/bathrooms) -> data2
+summary(data2$guestbath_ratio)
+data2 %>% mutate(avail = factor(ifelse(avail_30 < 1, 0, 1))) -> data2
+
+n2=dim(data2)[1]
+j=sample(1:n2,0.1*n2)
+
+testB=data2[j,]
+trainB=data2[-j,]
+
+log_mod2 <- glm(avail ~ price + list_count + resp_rate + n_hood + prop_type + 
+                room_type + accommodates + guestbath_ratio + min_nights + revs_month + 
+                revs_rating, family=binomial, data=trainB)
+# all variables could be useful for prediction
+
+# Fitted Values vs Residuals
+binnedplot( log_mod2$fitted.values, residuals(log_mod2, type="deviance"),
+            nclass = 15, ylab="Average deviance residuals" )
+# still pretty bad
+
+train %>% drop_na(revs_month,revs_rating) -> train3
+mis.class(train3,train3$avail,log_mod1b)
+# 15.09% - confirms that simpler model is not better for prediction
+
+trainB2 <- na.omit(trainB)
+mis.class(trainB2,trainB2$avail,log_mod2)
+# 11.89% - first model is better for prediction
+```
+
+
 # Question 3
 
 ```{r}
 summary(data$revs_rating)
 prop.table(xtabs(~data$revs_rating))
 ```
-We decide to take ratings equal to 100 to mean very high review scores. (Top 15%)
+We decide to take ratings greater than or equal to 98 to mean very high review scores. (Top 30%)
 
 ```{r}
-densityPlot(data$revs_rating)
+densityPlot(data$revs_rating) # highly left skewed - most review scores are high
 ```
 
-
 ```{r}
-#Creating new variable high_rating if observation has a very high review score.
+#Creating new variable high_rating if observation has a very high review score
 high_rating <- data$revs_rating
 high_rating[data$revs_rating >= 98] <- 1
 high_rating[data$revs_rating < 98] <- 0
@@ -655,57 +686,185 @@ data <- data %>% mutate(high_rating = high_rating)
 data$high_rating <- as.numeric(data$high_rating)
 ```
 
+Exploratory analysis - relationships with review score
+```{r}
+#Probability plots:
+par(mfrow=c(3,4))
+for(v in cvars){
+  x <- xtabs( ~ data$high_rating + data[,v] )
+  prob <- x[2,] / ( x[1,] + x[2,]) # sample probability of score>=98
+  plot( sort( unique( data[,v] ) ), prob, pch=19,
+      xlab=v, ylab="Probability of rating >= 98")
+}
+
+#Factor variables:
+prop.table(xtabs( ~ high_rating + n_hood, data),2)
+# Barra da Tijuca more likely to have high rating => include n_hood in models
+```
+Conclusions from plots:
+* price seems to have some sort of relationship with high rating but not very obvious
+* effect of price may be more of an interaction with # guests for instance
+* higher response rate doesn't seem to increase rating - not v surprising since it measures % responses to enquiries about new bookings as opposed to enquiries during stay
+* higher list count associated with smaller probability of high rating
+* rating more likely to be high with large number of bathrooms - bit random lol
+* no obvious relationship with min_nights, guests, reviews per month or availability
+* wouldn't expect rating to depend on solely on number of guests, bathrooms, location etc. since these factors have all been considered by guests before selecting the property
+
+
+```{r}
+#Continuous variables with rating:
+par(mfrow=c(3,4))
+for(v in cvars)plot(data[,v], data$revs_rating, xlab =v, ylab="Rev rating")
+
+#Correlation with rating:
+noNAs <- na.omit(data[,-c(4,5,6,15,16)]) 
+cors <- round(cor(noNAs, use = "pairwise"),2)
+cors[10,]
+# highest correlations: price(+), response rate(-), # listings(-), reviews(+)
+```
+
+```{r}
+#Making factor variable for price to allow for non-linear relationship with rating
+data$fct_price <- cut(data$price, breaks = c(0,100,150,200,300,500,1000), 
+                      labels = c("0-99","100-149","150-199","200-299","300-499",">500"), 
+                      right = F)
+summary(data$fct_price)
+```
+
+```{r}
+#Variables to include in model: neighbourhood, price, response rate, # listings, number of reviews, guests, bathrooms
+rating_mod1 <- glm(high_rating ~ price + resp_rate + list_count + n_hood + num_reviews + guests + bathrooms + avail_30, data=data, family=binomial)
+summary(rating_mod1)
+
+#Checking linearity assumption
+vars <- c("price","resp_rate","list_count","num_reviews","guests","bathrooms","avail_30")
+par(mfrow=c(2,2))
+for(v in vars){
+  binnedplot( na.omit(data)[,v], residuals(rating_mod1, type="deviance"),
+            nclass = 15, xlab=v)
+}
+
+par(mfrow=c(2,2))
+for(v in vars){
+  plot( predict(rating_mod1,type="link"), na.omit(data)[,v],
+        pch=20, xlab=v)
+}
+
+
+# Step model
+rating_step1 <- step(rating_mod1,trace=F)
+summary(rating_step1) # doesn't remove anything ?!
+#vars_step <- vars[-c(1,5)]
+par(mfrow=c(2,2))
+for(v in vars){
+  binnedplot( na.omit(data)[,v], residuals(rating_step1, type="deviance"),
+            nclass = 15, xlab=v)
+}
+
+par(mfrow=c(2,2))
+for(v in vars){
+  plot( predict(rating_step1,type="link"), na.omit(data)[,v],
+        pch=20, xlab=v)
+}
+```
+
+
+```{r}
+# Model with accommodates instead of guests
+rating_mod2 <- glm(high_rating ~ price + accommodates + bathrooms + resp_rate + n_hood + list_count + num_reviews + avail_30, data=data, family=binomial)
+summary(rating_mod2)
+
+vars2 <- c("price","accommodates","bathrooms","resp_rate","list_count","num_reviews","avail_30")
+par(mfrow=c(2,2))
+for(v in vars2){
+  binnedplot( na.omit(data)[,v], residuals(rating_mod2, type="deviance"),
+            nclass = 15, xlab=v)
+}
+
+# step doesn't remove any variables
+# price/guests/bathrooms interaction not significant
+# but price:n_hood interaction significant - should we leave in or will it make
+# interpretation too difficult?
+
+rating_mod3 <- update(rating_mod2, .~. + prop_type + room_type)
+anova(rating_mod2,rating_mod3,test="LRT")
+# property type and room type have no significant effect given other predictors
+```
+
+Summary:
+
+* Price and guests do not appear to influence the probability of a high rating being awarded in the first model. This is not too surprising as these factors have already been considered by guests when choosing a property to stay in. 
+* Number of bathrooms is highly significant 
+* Interestingly, in model with guests but no bathrooms, price becomes highly significant but guests still insignificant. Using accommodates instead of guests causes all coefficients to become significant (higher accommodates decreases prob of high rating). Price in this model increases prob of high rating.
+* High rating more likely in Barra da Tijuca compared to other 2 districts
+
+Assumptions that need to be met:
+
+* Independence of observations, i.e. whether or not a rating is high must be independent of other ratings. This is a reasonable assumption because the rating of one property should depend on the rating of any others. *Would this still hold for private/shared rooms of the same property? (If not should we restrict the data to only entire homes/apts?)*
+* Identically distributed
+* Linear relationship with continuous variables - investigate by plotting binned residual plots or linear predictor against each explanatory variable 
+
+Sensitivity analysis: changing threshold of "high review"
+```{r}
+# High review = 100
+data %>% mutate(high_rating100 = factor(ifelse(revs_rating < 100, 0, 1))) -> data
+rating_100 <- glm(high_rating100 ~ price + accommodates + bathrooms + resp_rate + n_hood + list_count + num_reviews + avail_30, data=data, family=binomial)
+summary(rating_100)
+
+#Linearity assumption
+par(mfrow=c(2,2))
+for(v in vars2){
+  binnedplot( na.omit(data)[,v], residuals(rating_100, type="deviance"),
+            nclass = 15, xlab=v)
+}
+# no longer satisfied
+par(mfrow=c(2,2))
+for(v in vars2){
+  plot( predict(rating_100,type="link"), na.omit(data)[,v],
+        pch=20, xlab=v)
+}
+
+
+# High review >= 95
+
+data %>% mutate(high_rating95 = factor(ifelse(revs_rating < 95, 0, 1))) -> data
+rating_95 <- glm(high_rating95 ~ price + accommodates + bathrooms + resp_rate + n_hood + list_count + num_reviews + avail_30, data=data, family=binomial)
+summary(rating_95)
+
+# Linearity assumption
+par(mfrow=c(2,2))
+for(v in vars2){
+  binnedplot( na.omit(data)[,v], residuals(rating_100, type="deviance"),
+            nclass = 15, xlab=v)
+}
+```
+
+High rating threshold = 100
+
+* Linearity assumptions not satisfied as well
+* Ipanema not significant at 5% level
+* Magnitude and sign of other coefficients similar, except for num_reviews
+
+High rating threshold: >=95
+
+* Diagnostics better - more points lie within expected values
+* All significant except num_reviews
+* Bathrooms coeff much smaller, other coeffs similar magnitude
+
+```{r}
+data %>% filter(room_type=="Shared room") %>% dplyr::select(guests,accommodates)
+
+# some properties can accommodate 16 people but each listing is for 1 guest
+# doesn't really make much sense to use accommodates instead of guests for rating -> maybe both together as guests is the number for each listing whereas accommodates represents number of people in the shared property (so gives indication of size of house)
+```
+
+
 ```{r}
 #Trying out linear model
-full_lm <- lm(high_rating ~. - num_reviews, data = data)
+full_lm <- lm(revs_rating ~. - num_reviews, data = data)
 AIC(full_lm)
 #Diagnostic plots
 par(mfrow = c(2,2))
 plot(m)
 ```
-
-```{r}
-#Continous variables
-par(mfrow=c(3,4))
-for(v in cvars)plot(data[,v], data$revs_rating, xlab =v, ylab="Rev rating")
-```
-
-```{r}
-
-test1 <- glm(high_rating ~. -revs_rating-avail-revs_month+I(price^2), family = binomial(link = "logit"), data = data)
-summary(test1)
-
-step1 <- step(test1, trace = FALSE)
-summary(step1)
-
-## Diagnostics
-
-# Is independence assumption reasonable in this context ? (probably??)
-# Fitted Values vs Residuals
-
-binnedplot( step1$fitted.values, residuals(step1, type="deviance"),
-            nclass = 15, ylab="Average deviance residuals" )
-
-par(mfrow=c(2,3))
-binnedplot( na.omit(data)$price, residuals(step1, type="deviance"),
-            nclass = 15, xlab="Daily price" )
-binnedplot( na.omit(data)$resp_rate, residuals(step1, type="deviance"),
-            nclass = 15, xlab="Daily price" )
-binnedplot( na.omit(data)$list_count, residuals(step1, type="deviance"),
-            nclass = 15, xlab="Daily price" )
-binnedplot( na.omit(data)$bathrooms, residuals(step1, type="deviance"),
-            nclass = 15, xlab="Daily price" )
-binnedplot( na.omit(data)$accommodates, residuals(step1, type="deviance"),
-            nclass = 15, xlab="Daily price" )
-binnedplot( na.omit(data)$guests, residuals(step1, type="deviance"),
-            nclass = 15, xlab="Number of guests" )
-binnedplot( na.omit(data)$min_nights, residuals(step1, type="deviance"),
-            nclass = 15, xlab="Minimum length of stay" )
-binnedplot( na.omit(data)$num_reviews, residuals(step1, type="deviance"),
-            nclass = 15, xlab="Number of reviews" )
-binnedplot( na.omit(data)$avail_30, residuals(step1, type="deviance"),
-            nclass = 15, xlab="Available 30" )
-# Doesn't look that great tbh :/ (points supposed to lie within grey lines)
-```
-
 
