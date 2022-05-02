@@ -115,7 +115,6 @@ round(prop.table(xtabs(~ resp_miss + n_hood, data),2),2)
 round(prop.table(xtabs(~ resp_miss + room_type, data),2),2)
 round(prop.table(xtabs(~ resp_miss + prop_type, data),2),2)
 
-
 # missingness of host response rate seems to depend on frequency/number of reviews and number of listings a host has
 # also varies across neighbourhood and type of property
 # most likely MAR
@@ -204,14 +203,14 @@ for(v in cvars[])boxplot(data[,v], main = v, las = 2)
 Plotting our variables against price gives us an idea of any problems (outliers, unrealistic values etc.) or features of the data that we didn't detect in our summaries.
 
 ```{r, echo=FALSE}
-#Continous variables
+#Continuous variables
 par(mfrow=c(3,4))
 for(v in cvars[-1])plot(data[,v], data$price, xlab =v, ylab="Price")
 ```
 
 ```{r}
 #Factors
-grid.arrange(ggplot(data,aes(price,n_hood))+geom_boxplot()+
+plot2 <- grid.arrange(ggplot(data,aes(price,n_hood))+geom_boxplot()+
                labs(x="Daily price",y="Neighbourhood"),
              ggplot(data,aes(price,prop_type))+geom_boxplot()+
                labs(x="Daily price",y="Property"),
@@ -251,19 +250,19 @@ AIC(full_lm4)
 
 #Finding "best" linear model by comparing AIC using 'step' function 
 #with reviews per month
-best_lm <- step(full_lm3, trace = F)
-AIC(best_lm)
+best_lm1 <- step(full_lm3, trace = F)
+AIC(best_lm1)
 
 #Diagnostic plots
 par(mfrow=c(2,2))
-plot(best_lm)
+plot(best_lm1)
 
 #Box-Cox transformation plot
-boxcox(best_lm, lambda=seq(0,0.1,0.01))
+boxcox(best_lm1, lambda=seq(0,0.1,0.01))
 #95% CI for lambda includes 0, so log transformation suitable
 
 #Model with log transform of response variable.
-log_best_lm <- update(best_lm, log(.)~.)
+log_best_lm <- update(best_lm1, log(.)~.)
 AIC(log_best_lm)
 
 #Using step to find best linear model by comparing AIC
@@ -277,6 +276,13 @@ plot(best_lm)
 We see that only some variables are statistically significant in predicting price, namely: list_count, neighbourhood, property type, room type, bathrooms, accommodates, guests, revs_month, revs_rating and avail_30.
 
 Final linear model gave AIC = 4084, but only has r-squared = 54%.
+
+```{r}
+#Q-Q plots of linear and log linear 
+par(mfrow = c(1,2))
+plot(best_lm1,2)
+plot(best_lm,2)
+```
 
 ```{r}
 #Trying a Gamma distribution first because that's what price's density plot looked like.
@@ -351,6 +357,8 @@ AIC(best_log_gau_mod)
 par(mfrow = c(2,2))
 plot(best_log_gau_mod)
 
+cbind(exp(coef(best_log_gau_mod))-1)
+
 #Testing with inverse link function
 test <- update(best_log_gau_mod, family = gaussian(link = "inverse"))
 AIC(test)
@@ -361,20 +369,19 @@ Gaussian model with log transform on price gives AIC = 4072, diagnostic plots al
 We tried inverse gaussian, model wasn't as good. Normally for highly right skewed.
 ```{r}
 #Inverse Gaussian models, may be more suited as variables are highly right skewed
-#Not too sure how to do inverse gaussian
 inv_gau_mod1 <- glm(price ~. - num_reviews, family = inverse.gaussian(link = "log"), data = na.omit(data))
 summary(inv_gau_mod1)
 par(mfrow = c(2,2))
 plot(inv_gau_mod1)
 
-test <- update(inv_gau_mod1, log(.)~.)
-summary(test)
+log_inv_gau_mod1 <- update(inv_gau_mod1, log(.)~.)
+summary(log_inv_gau_mod1)
 par(mfrow = c(2,2))
-plot(test)
+plot(log_inv_gau_mod1)
 ```
 
 ```{r}
-#Looking at the different diagnostic plots
+#Looking at the different diagnostic plots from all models
 par(mfrow = c(2,2))
 plot(best_lm)
 par(mfrow = c(2,2))
@@ -390,19 +397,19 @@ plot(predict(best_log_gau_mod),resid(best_log_gau_mod),pch=20,
 qqnorm(resid(best_log_gam_mod))
 qqnorm(resid(best_log_gau_mod))
 ```
-Linear and Gaussian model has better diagnostic plots compared to gamma, and I think Gaussian model has better diagnostic plots compared to linear model. So we choose the Gaussian model, which also gives lowest AIC??
+Linear and Gaussian model has better diagnostic plots compared to gamma. Gaussian model and log linear mode have very similar diagnostic plots.
 
-we choose the log linear model!
+We choose the log linear model!
 ```{r}
 summary(best_lm)
 ```
 We see all variables are significant.
 
 ```{r}
-#Confidence Intervals
-cbind(coef(best_lm),exp(confint(best_lm)))
+#Confidence Intervals and coefficients table
+table <- data.frame(cbind((exp(coef(best_lm)[-1])-1)*100,exp(confint(best_lm)[-1,])))
+table
 ```
-
 
 
 # Question 2
@@ -437,7 +444,6 @@ round(prop.table(xtabs( ~ avail + prop_type, data ),2),2)
 round(prop.table(xtabs( ~ avail + room_type, data ),2),2)
   # type of property seems to affect availability
 ```
-
 
 ```{r,echo=F}
 # Continuous variables:
@@ -484,13 +490,15 @@ plot( sort( unique( data$revs_month ) ), prob_revs, pch=19,
 ```
 
 ```{r}
+data2 <- na.omit(data)
+
 # Create test and training datasets
 set.seed(1804)
-n=dim(data)[1]
+n=dim(data2)[1]
 i=sample(1:n,0.1*n)
 
-test=data[i,] #10% of dataset
-train=data[-i,] #90% of dataset
+test=data2[i,] #10% of dataset
+train=data2[-i,] #90% of dataset
 ```
 
 Omitted variables: num_reviews (highly correlated with revs_month), accommodates (highly correlated with guests). Might also be appropriate to exclude number of listings as it shouldn't really help predict availability of individual properties (but have kept it in for now)
@@ -502,13 +510,13 @@ Omitted variables: num_reviews (highly correlated with revs_month), accommodates
 # (Almost) Full model
 log_mod1 <- glm(avail ~ price + log(resp_rate) + n_hood + prop_type + 
                 room_type + log(guests) + bathrooms + min_nights + revs_month + 
-                revs_rating, family=binomial(link="logit"), data=na.omit(train))
+                revs_rating, family=binomial(link="logit"), data=train)
 summary(log_mod1)
 # based on context, list count and bathrooms shouldn't affect property being available
 
 log_mod2 <- glm(avail ~ price + list_count + resp_rate + n_hood + prop_type + 
                 room_type + bathrooms + accommodates + min_nights + revs_month + 
-                revs_rating, family=binomial, data=na.omit(train))
+                revs_rating, family=binomial, data=train)
 summary(log_mod2)
 
 log_mod3 <- step(log_mod1, trace = FALSE)
@@ -532,34 +540,34 @@ binnedplot( log_mod1$fitted.values, residuals(log_mod1, type="deviance"),
             nclass = 15, ylab="Average deviance residuals" )
 
 par(mfrow=c(2,3))
-binnedplot( na.omit(train)$price, residuals(log_mod1, type="deviance"),
+binnedplot( train$price, residuals(log_mod1, type="deviance"),
             nclass = 15, xlab="Daily price" )
 binnedplot( na.omit(train)$resp_rate, residuals(log_mod1, type="deviance"),
             nclass = 15, xlab="Response rate" )
-binnedplot( na.omit(train)$guests, residuals(log_mod1, type="deviance"),
+binnedplot( train$guests, residuals(log_mod1, type="deviance"),
             nclass = 15, xlab="Number of guests" )
-binnedplot( na.omit(train)$bathrooms, residuals(log_mod1, type="deviance"),
+binnedplot( train$bathrooms, residuals(log_mod1, type="deviance"),
             nclass = 15, xlab="Number of bathrooms" )
-binnedplot( na.omit(train)$min_nights, residuals(log_mod1, type="deviance"),
+binnedplot( train$min_nights, residuals(log_mod1, type="deviance"),
             nclass = 15, xlab="Minimum length of stay" )
-binnedplot( na.omit(train)$revs_month, residuals(log_mod1, type="deviance"),
+binnedplot( train$revs_month, residuals(log_mod1, type="deviance"),
             nclass = 15, xlab="Reviews per month" )
-binnedplot( na.omit(train)$revs_rating, residuals(log_mod1, type="deviance"),
+binnedplot( train$revs_rating, residuals(log_mod1, type="deviance"),
             nclass = 15, xlab="Rating" )
 # Doesn't look that great tbh :/ (points supposed to lie within grey lines)
 
 par(mfrow=c(2,2))
-plot(x=na.omit(train)$price,y=predict(log_mod1,type="link"),pch=20)
-plot(x=na.omit(train)$resp_rate,y=predict(log_mod1,type="link"),pch=20)
-plot(x=na.omit(train)$guests,y=predict(log_mod1,type="link"),pch=20)
-plot(x=na.omit(train)$bathrooms,y=predict(log_mod1,type="link"),pch=20)
-plot(x=na.omit(train)$min_nights,y=predict(log_mod1,type="link"),pch=20)
-plot(x=na.omit(train)$revs_month,y=predict(log_mod1,type="link"),pch=20)
-plot(x=na.omit(train)$revs_rating,y=predict(log_mod1,type="link"),pch=20)
+plot(x=train$price,y=predict(log_mod1,type="link"),pch=20)
+plot(x=train$resp_rate,y=predict(log_mod1,type="link"),pch=20)
+plot(x=train$guests,y=predict(log_mod1,type="link"),pch=20)
+plot(x=train$bathrooms,y=predict(log_mod1,type="link"),pch=20)
+plot(x=train$min_nights,y=predict(log_mod1,type="link"),pch=20)
+plot(x=train$revs_month,y=predict(log_mod1,type="link"),pch=20)
+plot(x=train$revs_rating,y=predict(log_mod1,type="link"),pch=20)
 ```
 ```{r}
 # Diagnostic plots version 3
-tmp <- na.omit(train) %>% dplyr::select_if(is.numeric) 
+tmp <- train %>% dplyr::select_if(is.numeric) 
 predictors <- colnames(tmp)
 probs <- predict(log_mod3, type = "response")
 tmp <- tmp %>%
@@ -570,7 +578,7 @@ ggplot(tmp, aes(logit, predictor.value))+
   geom_smooth(method = "loess") + 
   facet_wrap(~predictors, scales = "free_y")
 
-tmp_step <- na.omit(train) %>% dplyr::select(price,min_nights,revs_month)
+tmp_step <- train %>% dplyr::select(price,min_nights,revs_month)
 predictors_step <- c("price","min_nights","revs_month")
 probs_step <- predict(log_mod3, type = "response")
 tmp_step <- tmp_step %>%
@@ -595,7 +603,6 @@ mis.class=function(observed,y,model,p=0.5) {
     (xx[1,2]+xx[2,1])/(sum(xx)) #proportion correctly predicted
 }
 
-#train2 <- na.omit(train)
 train %>% drop_na(revs_month,revs_rating,bathrooms,list_count) -> train2b
 mis.class(train,train$avail,log_mod1)
 # 11.54% misclassified
@@ -618,7 +625,7 @@ mis.class(test,test$avail,log_mod1)
 cost <- function(r, pi = 0) mean(abs(r-pi) > 0.5)
 # corresponds to misclassification rate
 
-cv.glm(train2, log_mod1, cost)$delta[1]
+cv.glm(train, log_mod1, cost)$delta[1]
 # 11.52% (same as misclass rate in model)
 ```
 
@@ -669,6 +676,7 @@ mis.class(trainB2,trainB2$avail,log_mod2)
 
 ```{r}
 summary(data$revs_rating)
+#Proportion table of review ratings.
 prop.table(xtabs(~data$revs_rating))
 ```
 We decide to take ratings greater than or equal to 98 to mean very high review scores. (Top 30%)
@@ -678,7 +686,7 @@ densityPlot(data$revs_rating) # highly left skewed - most review scores are high
 ```
 
 ```{r}
-#Creating new variable high_rating if observation has a very high review score
+#Creating new variable high_rating defining if observation has a very high review score
 high_rating <- data$revs_rating
 high_rating[data$revs_rating >= 98] <- 1
 high_rating[data$revs_rating < 98] <- 0
@@ -708,8 +716,9 @@ Conclusions from plots:
 * higher list count associated with smaller probability of high rating
 * rating more likely to be high with large number of bathrooms - bit random lol
 * no obvious relationship with min_nights, guests, reviews per month or availability
-* wouldn't expect rating to depend on solely on number of guests, bathrooms, location etc. since these factors have all been considered by guests before selecting the property
+* wouldn't expect rating to depend solely on number of guests, bathrooms, location etc. since these factors have all been considered by guests before selecting the property
 
+trends with bathrooms, accommodates, and list count
 
 ```{r}
 #Continuous variables with rating:
@@ -732,7 +741,7 @@ summary(data$fct_price)
 ```
 
 ```{r}
-#Variables to include in model: neighbourhood, price, response rate, # listings, number of reviews, guests, bathrooms
+#Variables to include in model: neighbourhood, price, response rate, # listings, number of reviews, guests, bathrooms. Other variables not included as contextually they would not affect review ratings.
 rating_mod1 <- glm(high_rating ~ price + resp_rate + list_count + n_hood + num_reviews + guests + bathrooms + avail_30, data=data, family=binomial)
 summary(rating_mod1)
 
@@ -767,7 +776,6 @@ for(v in vars){
         pch=20, xlab=v)
 }
 ```
-
 
 ```{r}
 # Model with accommodates instead of guests
@@ -804,11 +812,32 @@ Assumptions that need to be met:
 * Identically distributed
 * Linear relationship with continuous variables - investigate by plotting binned residual plots or linear predictor against each explanatory variable 
 
+```{r}
+#Investigating interactions
+int_test <- step(rating_mod2,scope=list(upper=~ price*accommodates*bathrooms*avail_30*n_hood*resp_rate*list_count*num_reviews,lower=~1),trace=F)
+summary(int_test)
+
+#Removes these 2 interactions as they did not make sense contexually.
+rating_final <- update(int_test, .~. - accommodates:list_count - resp_rate:n_hood)
+summary(rating_final)
+```
+
+```{r}
+#Model diagnostics
+vars2 <- c("price","accommodates","bathrooms","resp_rate","list_count","num_reviews","avail_30")
+par(mfrow=c(2,2))
+for(v in vars2){
+  binnedplot( na.omit(data)[,v], residuals(rating_final, type="deviance"),
+            nclass = 15, xlab=v)
+}
+```
+
+
 Sensitivity analysis: changing threshold of "high review"
 ```{r}
 # High review = 100
 data %>% mutate(high_rating100 = factor(ifelse(revs_rating < 100, 0, 1))) -> data
-rating_100 <- glm(high_rating100 ~ price + accommodates + bathrooms + resp_rate + n_hood + list_count + num_reviews + avail_30, data=data, family=binomial)
+rating_100 <- glm(high_rating100 ~ price + accommodates + bathrooms + resp_rate + n_hood + list_count + num_reviews + avail_30 + resp_rate:list_count + resp_rate:num_reviews + price:n_hood, data=data, family=binomial)
 summary(rating_100)
 
 #Linearity assumption
@@ -824,11 +853,10 @@ for(v in vars2){
         pch=20, xlab=v)
 }
 
-
 # High review >= 95
 
 data %>% mutate(high_rating95 = factor(ifelse(revs_rating < 95, 0, 1))) -> data
-rating_95 <- glm(high_rating95 ~ price + accommodates + bathrooms + resp_rate + n_hood + list_count + num_reviews + avail_30, data=data, family=binomial)
+rating_95 <- glm(high_rating95 ~ price + accommodates + bathrooms + resp_rate + n_hood + list_count + num_reviews + avail_30 + resp_rate:list_count + resp_rate:num_reviews + price:n_hood, data=data, family=binomial)
 summary(rating_95)
 
 # Linearity assumption
@@ -860,11 +888,12 @@ data %>% filter(room_type=="Shared room") %>% dplyr::select(guests,accommodates)
 
 
 ```{r}
-#Trying out linear model
-full_lm <- lm(revs_rating ~. - num_reviews, data = data)
-AIC(full_lm)
-#Diagnostic plots
-par(mfrow = c(2,2))
-plot(m)
+summary(rating_final)
+
+cbind(exp(coef(rating_final)),exp(confint(rating_final)))
+
+#coefficient plot
+ggcoef(rating_final, exclude_intercept = TRUE, shape = 18, color = "purple", exponentiate = TRUE)
 ```
+
 
