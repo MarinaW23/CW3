@@ -198,7 +198,7 @@ for(v in cvars[])boxplot(data[,v], main = v, las = 2)
 ```
 
 
-# Question 1
+# Question 1: Factors affecting price
 
 Plotting our variables against price gives us an idea of any problems (outliers, unrealistic values etc.) or features of the data that we didn't detect in our summaries.
 
@@ -412,7 +412,7 @@ table
 ```
 
 
-# Question 2
+# Question 2: Predicting availability for the next 30 days
 
 Initial thoughts / stuff for report:
 
@@ -426,9 +426,15 @@ Initial thoughts / stuff for report:
 * Since we are interested in prediction, don't want to remove variables purely on the basis that they aren't significant. But also don't want to overfit the model.
 
 ```{r}
-# Create new variable for whether or not there is at least 1 day available in next month
+#Create new variable for whether or not there is at least 1 day available in next month
 data %>% mutate(avail = factor(ifelse(avail_30 < 1, 0, 1))) -> data
 summary(data$avail)
+
+#Proportion of listings that have availability
+tab <- table(data$avail)
+tab[2]/sum(tab)
+# 85.18%
+# much higher proportion have at least 1 day available compared to none (not surprising as not many properties are likely to be fully booked), which may affect the fit/performance of models
 ```
 
 ```{r}
@@ -504,46 +510,47 @@ train=data2[-i,] #90% of dataset
 Omitted variables: num_reviews (highly correlated with revs_month), accommodates (highly correlated with guests). Might also be appropriate to exclude number of listings as it shouldn't really help predict availability of individual properties (but have kept it in for now)
 
 ```{r}
-# Response variable is binary so use GLM with binomial EF and logit link
-# Build model for prediction using training data
+#Response variable is binary so use GLM with binomial EF and logit link
+#Build model for prediction using training data
 
-# (Almost) Full model
-log_mod1 <- glm(avail ~ price + log(resp_rate) + n_hood + prop_type + 
-                room_type + log(guests) + bathrooms + min_nights + revs_month + 
+#(Almost) Full model
+log_mod1 <- glm(avail ~ price + resp_rate + n_hood + prop_type + 
+                room_type + guests + bathrooms + min_nights + revs_month + 
                 revs_rating, family=binomial(link="logit"), data=train)
 summary(log_mod1)
 # based on context, list count and bathrooms shouldn't affect property being available
 
-log_mod2 <- glm(avail ~ price + list_count + resp_rate + n_hood + prop_type + 
-                room_type + bathrooms + accommodates + min_nights + revs_month + 
-                revs_rating, family=binomial, data=train)
-summary(log_mod2)
+#log_mod2 <- glm(avail ~ price + list_count + resp_rate + n_hood + prop_type + 
+#                room_type + bathrooms + accommodates + min_nights + revs_month + 
+#                revs_rating, family=binomial, data=train)
+#summary(log_mod2)
 
+#Small model chosen for lowest AIC (for comparison)
 log_mod3 <- step(log_mod1, trace = FALSE)
 summary(log_mod3)
 
-# Small model (not very useful for prediction purposes, just for comparison)
-drop1(log_mod1)
-log_mod1b <- glm(avail ~ price + prop_type + guests + min_nights + revs_month, 
-                 family=binomial, data=train)
-summary(data$revs_rating)
+#drop1(log_mod1)
+#log_mod1b <- glm(avail ~ price + prop_type + guests + min_nights + revs_month, 
+#                 family=binomial, data=train)
+#summary(data$revs_rating)
 ```
 
-Most variables are associated with a higher odds of availability; for example, a property costing £50 more than an otherwise identical one is 6.5% more likely to have availability in the next month. However, a higher rating and longer minimum stay are associated with a lower likelihood of a property being available. These relationships are what we would expect in the context. While only price, minimum stay and monthly reviews are significant at the 5% level, the other variables still seem important for predictive purposes and so will be kept in the model.
+Most variables are associated with a higher odds of availability (though not many are significant). For example, a property costing $50 more than an otherwise identical one is 6.5% more likely to have availability in the next month. However, a higher rating and longer minimum stay are associated with a lower likelihood of a property being available. These relationships are what we would expect in the context. While only price, minimum stay and monthly reviews are significant at the 5% level, the other variables still seem important for predictive purposes and so will be kept in the model.
 
+Diagnostics:
 ```{r}
-## Diagnostics
-
-# Is independence assumption reasonable in this context ? (probably??)
-# Fitted Values vs Residuals
+#Fitted values vs residuals
 binnedplot( log_mod1$fitted.values, residuals(log_mod1, type="deviance"),
             nclass = 15, ylab="Average deviance residuals" )
+binnedplot( log_mod3$fitted.values, residuals(log_mod3, type="deviance"),
+            nclass = 15, ylab="Average deviance residuals" )
 
+#Continuous predicts vs residuals for log_mod1
 par(mfrow=c(2,3))
 binnedplot( train$price, residuals(log_mod1, type="deviance"),
             nclass = 15, xlab="Daily price" )
 binnedplot( na.omit(train)$resp_rate, residuals(log_mod1, type="deviance"),
-            nclass = 15, xlab="Response rate" )
+            nclass = 10, xlab="Response rate" )
 binnedplot( train$guests, residuals(log_mod1, type="deviance"),
             nclass = 15, xlab="Number of guests" )
 binnedplot( train$bathrooms, residuals(log_mod1, type="deviance"),
@@ -554,19 +561,12 @@ binnedplot( train$revs_month, residuals(log_mod1, type="deviance"),
             nclass = 15, xlab="Reviews per month" )
 binnedplot( train$revs_rating, residuals(log_mod1, type="deviance"),
             nclass = 15, xlab="Rating" )
-# Doesn't look that great tbh :/ (points supposed to lie within grey lines)
-
-par(mfrow=c(2,2))
-plot(x=train$price,y=predict(log_mod1,type="link"),pch=20)
-plot(x=train$resp_rate,y=predict(log_mod1,type="link"),pch=20)
-plot(x=train$guests,y=predict(log_mod1,type="link"),pch=20)
-plot(x=train$bathrooms,y=predict(log_mod1,type="link"),pch=20)
-plot(x=train$min_nights,y=predict(log_mod1,type="link"),pch=20)
-plot(x=train$revs_month,y=predict(log_mod1,type="link"),pch=20)
-plot(x=train$revs_rating,y=predict(log_mod1,type="link"),pch=20)
+# fit doesn't look that good
+# residuals seems to be distributed around 0.2 instead of 0
 ```
+
 ```{r}
-# Diagnostic plots version 3
+#Continuous variables vs linear predictor
 tmp <- train %>% dplyr::select_if(is.numeric) 
 predictors <- colnames(tmp)
 probs <- predict(log_mod3, type = "response")
@@ -589,41 +589,135 @@ ggplot(tmp_step, aes(logit, predictor.value))+
   geom_smooth(method = "loess") + 
   facet_wrap(~predictors_step, scales = "free_y")
 
-# not good :(
-# think vertical lines mean predictor doesn't really affect logit response?
+# vertical lines could mean predictor doesn't really affect logit response
 ```
 
 ```{r}
-# Prediction error in training data
+## Define the bins
+num_bins <- 15
+cut_offs <- quantile( log_mod1$fitted.values, 
+                      (0:num_bins) / num_bins )
 
-#Function to calculate misclassification rate
-mis.class=function(observed,y,model,p=0.5) {
-    pred=predict(model,observed,type="response") #probability predicted by model
-    xx=xtabs(~y+(pred>p))
-    (xx[1,2]+xx[2,1])/(sum(xx)) #proportion correctly predicted
+## Store availability status as numeric 0 or 1
+avail_numeric <- as.numeric(data$avail)-1
+
+## Compute observed and predicted proportions for each bin
+proportion_observed  <- rep(0, num_bins)
+proportion_predicted <- rep(0, num_bins) 
+
+for( i in 1:num_bins ){
+  ind <- which( log_mod1$fitted.values >= cut_offs[i] & 
+                log_mod1$fitted.values <  cut_offs[i+1]  )
+  proportion_observed[i]  <- mean( avail_numeric[ind] )
+  proportion_predicted[i] <- mean( log_mod1$fitted.values[ind] )
 }
 
-train %>% drop_na(revs_month,revs_rating,bathrooms,list_count) -> train2b
-mis.class(train,train$avail,log_mod1)
+## Plot predicted against observed proportions
+plot( proportion_predicted, proportion_observed, pch=20,
+      xlab="Predicted Proportions", ylab="Observed Proportions")
+abline(0,1)
+
+# not good
+```
+
+
+Prediction error in training data:
+```{r}
+#Brier score:
+brier.score=function(y,model) {
+    pred.prob=predict(model,type="response") #predicted probabilities
+    mean((pred.prob - y)^2)
+}
+
+brier.score(as.numeric(train$avail)-1,log_mod1) #0.1286449 / 0.1029814 (omit)
+brier.score(as.numeric(train$avail)-1,log_mod3) #0.1287746 / 0.1064913
+
+#Function to calculate misclassification rate
+mis.class=function(observed,y,model,p) {
+    pred=predict(model,observed,type="response") #probability predicted by model
+    xx=xtabs(~y+(pred>p))
+    mc_rate=(xx[1,2]+xx[2,1])/(sum(xx)) #proportion that are correctly predicted
+    
+    #sensitivity & specificity
+    se=xx[2,2]/sum(xx[2,])
+    sp=xx[1,1]/sum(xx[1,])
+    
+    round(cbind(mc_rate,se,sp),4)
+}
+
+mis.class(train,train$avail,log_mod1,0.5) #0.1178
+mis.class(train,train$avail,log_mod3,0.5) #0.1481
+```
+
+
+```{r,include=F}
+#Misclassification rate when cut-off probability is taken to be 0
+predicted1 <- as.integer(log_mod1$fitted.values > 0.5)
+(tbl <- table(predicted1,train$avail))
+mean(predicted1 != train$avail) #11.75% correctly predicted because of imbalance in data
+
+predicted2 <- as.integer(log_mod3$fitted.values > 0.5)
+(tbl2 <- table(predicted2,train$avail))
+mean(predicted2 != train$avail)
+
+(se1 <- tbl2[2,2]/sum(tbl2[,2])) #sensitivity = true positive rate
+(sp1 <- tbl2[1,1]/sum(tbl2[,1])) #specificity = true negative rate
+
+xtabs(~train$avail+predicted1)
+1-mean(predicted1[train$avail=="0"])
+
+#train %>% drop_na(revs_month,revs_rating,bathrooms,list_count) -> train2b
+#mis.class(train,train$avail,log_mod1)
 # 11.54% misclassified
 ```
 
+Prediction error in test data:
 ```{r}
-# Prediction error in test data
-
 #test2 <- na.omit(test)
 pred=predict(log_mod1,test,type="response")
 xtabs(~test$avail+(pred>0.5))
-mis.class(test,test$avail,log_mod1)
-# 12.44% - only 0.8 percentage points higher than training data
+
+mis.class(test,test$avail,log_mod1,0.5)
+mis.class(test,test$avail,log_mod3,0.5)
+
+# very low specificity => very high false positive rate (availability when there isn't)
+# fully booked listings are not predicted well
+
+#Try increasing cut-off probability:
+#ROC curve to determine trade-off between sensitivity & specificity
+threshold <- seq(0.8,0.9,0.01)
+se=rep(0,10); sp=rep(0,10)
+for(i in 1:10){
+  predicted <- as.integer(predict(log_mod1,test,type="response") > threshold[i])
+  xx=xtabs(~test$avail+predicted)
+  se[i]=xx[2,2]/sum(xx[2,])
+  sp[i]=xx[1,1]/sum(xx[1,])
+}
+plot(x=1-sp,y=se,pch=20,)
+lines(1-sp, se)
+text(1-sp, se, labels=threshold, cex=0.7, pos=3) #take p=0.86
+
+threshold <- seq(0.8,0.9,0.01)
+se=rep(0,10); sp=rep(0,10)
+for(i in 1:10){
+  predicted <- as.integer(predict(log_mod3,test,type="response") > threshold[i])
+  xx=xtabs(~test$avail+predicted)
+  se[i]=xx[2,2]/sum(xx[2,])
+  sp[i]=xx[1,1]/sum(xx[1,])
+}
+plot(x=1-sp,y=se,pch=20,)
+lines(1-sp, se)
+text(1-sp, se, labels=threshold, cex=0.7, pos=3) #take p=0.87
+
+#New rates
+mis.class(test,test$avail,log_mod1,0.86)
+mis.class(test,test$avail,log_mod3,0.87)
 ```
 
-
+Leave-one-out prediction error:
 ```{r,warning=F}
-# Leave-one-out prediction error 
-# since the response is a binary variable, an appropriate cost function is:
+#Since the response is a binary variable, an appropriate cost function corresponding to misclassification rate is:
 cost <- function(r, pi = 0) mean(abs(r-pi) > 0.5)
-# corresponds to misclassification rate
 
 cv.glm(train, log_mod1, cost)$delta[1]
 # 11.52% (same as misclass rate in model)
@@ -672,7 +766,7 @@ mis.class(trainB2,trainB2$avail,log_mod2)
 ```
 
 
-# Question 3
+# Question 3: Factors associated with very high review ratings
 
 ```{r}
 summary(data$revs_rating)
