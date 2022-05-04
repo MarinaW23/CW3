@@ -74,6 +74,7 @@ apply(is.na(data),2,mean)
 #the proportion of complete cases
 mean(apply(is.na(data),1,sum)==0)
 
+#Distribution of missing values
 source("plot.miss.R")
 plot.miss(data, c(2,3,7,12,13))
 #Looks random
@@ -796,10 +797,9 @@ for(v in vars){
 }
 
 
-# Step model
+#Step model
 rating_step1 <- step(rating_mod1,trace=F)
-summary(rating_step1) # doesn't remove anything ?!
-#vars_step <- vars[-c(1,5)]
+summary(rating_step1)
 par(mfrow=c(2,2))
 for(v in vars){
   binnedplot( na.omit(data)[,v], residuals(rating_step1, type="deviance"),
@@ -814,7 +814,7 @@ for(v in vars){
 ```
 
 ```{r}
-# Model with accommodates instead of guests
+#Model with accommodates instead of guests
 rating_mod2 <- glm(high_rating ~ price + accommodates + bathrooms + resp_rate + n_hood + list_count + num_reviews + avail_30, data=data, family=binomial)
 summary(rating_mod2)
 
@@ -826,9 +826,6 @@ for(v in vars2){
 }
 
 # step doesn't remove any variables
-# price/guests/bathrooms interaction not significant
-# but price:n_hood interaction significant - should we leave in or will it make
-# interpretation too difficult?
 
 rating_mod3 <- update(rating_mod2, .~. + prop_type + room_type)
 anova(rating_mod2,rating_mod3,test="LRT")
@@ -859,7 +856,7 @@ summary(rating_final)
 ```
 
 ```{r}
-#Model diagnostics
+#Model diagnostics: binned continuous covariates against residuals
 vars2 <- c("price","accommodates","bathrooms","resp_rate","list_count","num_reviews","avail_30")
 par(mfrow=c(2,2))
 for(v in vars2){
@@ -868,6 +865,12 @@ for(v in vars2){
 }
 ```
 ```{r}
+par(mfrow=c(1,2))
+#Binned residual plot
+binnedplot( rating_final$fitted.values, residuals(rating_final, type="deviance"),
+            nclass = 20, ylab="Average deviance residuals" )
+
+#Predicted vs observed proportions plot
 ## Define the bins
 num_bins <- 20
 cut_offs <- quantile( rating_final$fitted.values, 
@@ -887,7 +890,7 @@ for( i in 1:num_bins ){
 ## Plot predicted against observed proportions
 plot( proportion_predicted, proportion_observed, pch=20,
       xlab="Predicted Proportions", ylab="Observed Proportions",
-      main="Plot of fitted vs observed probabilities of high rating",
+      main="Plot of fitted vs observed probabilities \nof high rating",
       xlim=c(0,1),ylim=c(0,1))
 abline(0,1,lty=2)
 
@@ -941,19 +944,14 @@ High rating threshold: >=95
 * Bathrooms coeff much smaller, other coeffs similar magnitude
 
 ```{r}
-data %>% filter(room_type=="Shared room") %>% dplyr::select(guests,accommodates)
-
-# some properties can accommodate 16 people but each listing is for 1 guest
-# doesn't really make much sense to use accommodates instead of guests for rating -> maybe both together as guests is the number for each listing whereas accommodates represents number of people in the shared property (so gives indication of size of house)
-```
-
-
-```{r}
 summary(rating_final)
 
 cbind(exp(coef(rating_final)),exp(confint(rating_final)))
 
-#coefficient plot
+#Effect of $50 increase in price
+exp(coef(rating_final)[2]*100)
+
+#Coefficient plot
 ggcoef(rating_final, exclude_intercept = TRUE, shape = 18, color = "purple", exponentiate = TRUE)
 ```
 
